@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+
+    environment {
+        APPLICATION_REPO_URL = 'https://github.com/example/webapplication-repo.git'
+        SCRIPT_REPO_URL = 'https://github.com/example/script-repo.git'
+    }
+
+    stages {
+        stage('Checkout Pipeline Repo') {
+            steps {
+                echo 'Checking out the pipeline repository...'
+                // Jenkins usually handles the main checkout (the pipeline repo)
+                // but we can explicitly do it if needed.
+                checkout scm
+            }
+        }
+        stage('Clone Application Repository') {
+            steps {
+                echo 'Cloning webapplication-repo...'
+                dir('webapplication-repo') {
+                    // git branch: 'main', credentialsId: 'git-credentials-id', url: "${APPLICATION_REPO_URL}"
+                    // Simulating for the current environment:
+                    sh 'rm -rf * && cp -r /app/webapplication-repo/* .'
+                }
+            }
+        }
+        stage('Clone Script Repository') {
+            steps {
+                echo 'Cloning script-repo...'
+                dir('script-repo') {
+                    // git branch: 'main', credentialsId: 'git-credentials-id', url: "${SCRIPT_REPO_URL}"
+                    // Simulating for the current environment:
+                    sh 'rm -rf * && cp -r /app/script-repo/* .'
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                echo 'Build Stage (if applicable)...'
+                // For a Node.js app, we could run npm install here.
+                dir('webapplication-repo/simple-index-html') {
+                    // sh 'npm install'
+                    echo 'Simulating npm install...'
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploy Stage...'
+                // The deploy.sh script is now expected to be in script-repo/simple-index-html-script/
+                sh 'bash ./script-repo/simple-index-html-script/deploy.sh'
+            }
+        }
+    }
+    post {
+        success {
+            echo 'Application deployed successfully!'
+        }
+        failure {
+            echo 'Application deployment failed.'
+        }
+    }
+}
