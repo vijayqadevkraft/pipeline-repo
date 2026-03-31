@@ -1,0 +1,43 @@
+pipeline {
+    agent any
+    environment {
+        APPLICATION_REPO_URL = 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+        SCRIPT_REPO_URL = 'https://github.com/vijayqadevkraft/script-repo.git'
+        PIPELINE_REPO_URL = 'https://github.com/vijayqadevkraft/pipeline-repo.git'
+        TARGET_DIR = '/var/www/html/'
+    }
+    stages {
+        stage('Checkout Pipeline Repo') {
+            steps {
+                echo 'Checking out Pipeline Repository'
+                git branch: 'main', url: "${env.PIPELINE_REPO_URL}"
+            }
+        }
+        stage('Clone Application Repository') {
+            steps {
+                echo 'Cloning Application Repository'
+                sh "git clone ${env.APPLICATION_REPO_URL} application-repo || (cd application-repo && git pull)"
+            }
+        }
+        stage('Clone Script Repository') {
+            steps {
+                echo 'Cloning Script Repository'
+                sh "git clone ${env.SCRIPT_REPO_URL} script-repo || (cd script-repo && git pull)"
+            }
+        }
+        stage('Build') {
+            steps {
+                echo 'Building Node.js simple-index-html application'
+                dir('application-repo/simple-index-html') {
+                    sh 'npm install'
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploying simple-index-html'
+                sh "bash script-repo/deploy.sh application-repo/simple-index-html ${env.TARGET_DIR}"
+            }
+        }
+    }
+}
