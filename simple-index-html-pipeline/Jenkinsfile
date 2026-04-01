@@ -10,15 +10,14 @@ pipeline {
 
         stage('Checkout Pipeline Repo') {
             steps {
-                echo "Jenkinsfile loaded from pipeline-repo"
+                echo "✅ Jenkinsfile loaded from pipeline-repo (main branch)"
             }
         }
 
         stage('Clone Application Repo') {
             steps {
                 dir('app') {
-                    git branch: 'feature/simple-fullstack-setup-15135607', 
-                url: "${APP_REPO}"
+                    git branch: 'main', url: "${APP_REPO}"
                 }
             }
         }
@@ -33,17 +32,19 @@ pipeline {
 
         stage('Build') {
             steps {
-                echo "No build required for static HTML app"
+                echo "⚙️ No build required for static HTML application"
             }
         }
 
         stage('Deploy') {
             steps {
                 sh '''
-                echo "Starting deployment..."
-                
+                echo "🚀 Starting deployment..."
+
+                # Give execute permission
                 chmod +x script/simple-index-html-script/deploy.sh
-                
+
+                # Run deployment script
                 ./script/simple-index-html-script/deploy.sh
                 '''
             }
@@ -52,7 +53,7 @@ pipeline {
 
     post {
         success {
-            echo "✅ Deployment Successful"
+            echo "🎉 Deployment Successful"
         }
         failure {
             echo "❌ Deployment Failed"
