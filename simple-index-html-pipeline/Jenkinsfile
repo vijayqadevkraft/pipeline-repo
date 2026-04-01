@@ -6,7 +6,18 @@ pipeline {
         SCRIPT_REPO = 'https://github.com/vijayqadevkraft/script-repo.git'
     }
 
+    options {
+        timestamps()
+    }
+
     stages {
+
+        stage('Clean Workspace') {
+            steps {
+                echo "🧹 Cleaning workspace..."
+                deleteDir()   // VERY IMPORTANT (prevents old branch issue)
+            }
+        }
 
         stage('Checkout Pipeline Repo') {
             steps {
@@ -30,6 +41,15 @@ pipeline {
             }
         }
 
+        stage('Verify Structure') {
+            steps {
+                sh '''
+                echo "📂 Workspace structure:"
+                ls -R
+                '''
+            }
+        }
+
         stage('Build') {
             steps {
                 echo "⚙️ No build required for static HTML application"
@@ -41,10 +61,12 @@ pipeline {
                 sh '''
                 echo "🚀 Starting deployment..."
 
-                # Give execute permission
-                chmod +x script/simple-index-html-script/deploy.sh
+                if [ ! -f script/simple-index-html-script/deploy.sh ]; then
+                    echo "❌ deploy.sh not found!"
+                    exit 1
+                fi
 
-                # Run deployment script
+                chmod +x script/simple-index-html-script/deploy.sh
                 ./script/simple-index-html-script/deploy.sh
                 '''
             }
@@ -57,6 +79,9 @@ pipeline {
         }
         failure {
             echo "❌ Deployment Failed"
+        }
+        always {
+            echo "📌 Pipeline finished"
         }
     }
 }
