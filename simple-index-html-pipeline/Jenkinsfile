@@ -1,43 +1,60 @@
 pipeline {
     agent any
+
     environment {
-        APPLICATION_REPO_URL = 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-        SCRIPT_REPO_URL = 'https://github.com/vijayqadevkraft/script-repo.git'
-        PIPELINE_REPO_URL = 'https://github.com/vijayqadevkraft/pipeline-repo.git'
-        TARGET_DIR = '/var/www/html/'
+        APP_REPO = 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+        SCRIPT_REPO = 'https://github.com/vijayqadevkraft/script-repo.git'
     }
+
     stages {
+
         stage('Checkout Pipeline Repo') {
             steps {
-                echo 'Checking out Pipeline Repository'
-                git branch: 'main', url: "${env.PIPELINE_REPO_URL}"
+                echo "Jenkinsfile loaded from pipeline-repo"
             }
         }
-        stage('Clone Application Repository') {
+
+        stage('Clone Application Repo') {
             steps {
-                echo 'Cloning Application Repository'
-                sh "git clone ${env.APPLICATION_REPO_URL} application-repo || (cd application-repo && git pull)"
-            }
-        }
-        stage('Clone Script Repository') {
-            steps {
-                echo 'Cloning Script Repository'
-                sh "git clone ${env.SCRIPT_REPO_URL} script-repo || (cd script-repo && git pull)"
-            }
-        }
-        stage('Build') {
-            steps {
-                echo 'Building Node.js simple-index-html application'
-                dir('application-repo/simple-index-html') {
-                    sh 'npm install'
+                dir('app') {
+                    git branch: 'main', url: "${APP_REPO}"
                 }
             }
         }
+
+        stage('Clone Script Repo') {
+            steps {
+                dir('script') {
+                    git branch: 'main', url: "${SCRIPT_REPO}"
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo "No build required for static HTML app"
+            }
+        }
+
         stage('Deploy') {
             steps {
-                echo 'Deploying simple-index-html'
-                sh "bash script-repo/deploy.sh application-repo/simple-index-html ${env.TARGET_DIR}"
+                sh '''
+                echo "Starting deployment..."
+                
+                chmod +x script/simple-index-html-script/deploy.sh
+                
+                ./script/simple-index-html-script/deploy.sh
+                '''
             }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment Successful"
+        }
+        failure {
+            echo "❌ Deployment Failed"
         }
     }
 }
