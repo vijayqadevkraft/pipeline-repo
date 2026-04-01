@@ -17,7 +17,8 @@ pipeline {
         stage('Clone Application Repo') {
             steps {
                 dir('app') {
-                    git branch: 'main', url: "${APP_REPO}"
+                    git branch: 'feature/simple-fullstack-setup-15135607', 
+                url: "${APP_REPO}"
                 }
             }
         }
