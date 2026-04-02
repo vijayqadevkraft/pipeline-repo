@@ -1,13 +1,15 @@
 pipeline {
     agent any
 
-    environment {
-        APP_REPO = 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-        SCRIPT_REPO = 'https://github.com/vijayqadevkraft/script-repo.git'
+    parameters {
+        string(name: 'APP_NAME', defaultValue: 'simple-index-html', description: 'Application name')
+        string(name: 'BRANCH', defaultValue: 'main', description: 'Git branch')
     }
 
-    options {
-        timestamps()
+    environment {
+        APP_DIR = "app"
+        SCRIPT_DIR = "script"
+        DEPLOY_SCRIPT = "deploy.sh"
     }
 
     stages {
@@ -15,28 +17,28 @@ pipeline {
         stage('Clean Workspace') {
             steps {
                 echo "🧹 Cleaning workspace..."
-                deleteDir()   // VERY IMPORTANT (prevents old branch issue)
+                deleteDir()
             }
         }
 
         stage('Checkout Pipeline Repo') {
             steps {
-                echo "✅ Jenkinsfile loaded from pipeline-repo (main branch)"
+                echo "✅ Jenkinsfile loaded"
             }
         }
 
         stage('Clone Application Repo') {
             steps {
-                dir('app') {
-                    git branch: 'main', url: "${APP_REPO}"
+                dir("${APP_DIR}") {
+                    git branch: "${params.BRANCH}", url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
                 }
             }
         }
 
         stage('Clone Script Repo') {
             steps {
-                dir('script') {
-                    git branch: 'main', url: "${SCRIPT_REPO}"
+                dir("${SCRIPT_DIR}") {
+                    git branch: "${params.BRANCH}", url: 'https://github.com/vijayqadevkraft/script-repo.git'
                 }
             }
         }
@@ -52,22 +54,39 @@ pipeline {
 
         stage('Build') {
             steps {
-                echo "⚙️ No build required for static HTML application"
+                echo "⚙️ No build required (static + Node handled in deploy)"
             }
         }
 
         stage('Deploy') {
             steps {
-                sh '''
+                sh """
                 echo "🚀 Starting deployment..."
 
-                if [ ! -f script/simple-index-html-script/deploy.sh ]; then
-                    echo "❌ deploy.sh not found!"
+                DEPLOY_PATH="${SCRIPT_DIR}/${params.APP_NAME}/${DEPLOY_SCRIPT}"
+
+                echo "📍 Using script: $DEPLOY_PATH"
+
+                if [ ! -f "$DEPLOY_PATH" ]; then
+                    echo "❌ ERROR: deploy.sh not found!"
                     exit 1
                 fi
 
-                chmod +x script/simple-index-html-script/deploy.sh
-                ./script/simple-index-html-script/deploy.sh
+                chmod +x "$DEPLOY_PATH"
+
+                echo "▶️ Running deployment script..."
+                "$DEPLOY_PATH"
+                """
+            }
+        }
+
+        stage('Post Deployment Check') {
+            steps {
+                sh '''
+                echo "🌐 Checking services..."
+
+                systemctl status nginx || true
+                pm2 list || true
                 '''
             }
         }
