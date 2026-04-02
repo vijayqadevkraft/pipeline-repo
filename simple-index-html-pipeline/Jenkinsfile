@@ -54,7 +54,7 @@ pipeline {
 
         stage('Build') {
             steps {
-                echo "⚙️ No build required (static + Node handled in deploy)"
+                echo "⚙️ No build required (handled in deploy script)"
             }
         }
 
@@ -65,17 +65,17 @@ pipeline {
 
                 DEPLOY_PATH="${SCRIPT_DIR}/${params.APP_NAME}/${DEPLOY_SCRIPT}"
 
-                echo "📍 Using script: $DEPLOY_PATH"
+                echo "📍 Using script: \$DEPLOY_PATH"
 
-                if [ ! -f "$DEPLOY_PATH" ]; then
+                if [ ! -f "\$DEPLOY_PATH" ]; then
                     echo "❌ ERROR: deploy.sh not found!"
                     exit 1
                 fi
 
-                chmod +x "$DEPLOY_PATH"
+                chmod +x "\$DEPLOY_PATH"
 
                 echo "▶️ Running deployment script..."
-                "$DEPLOY_PATH"
+                "\$DEPLOY_PATH"
                 """
             }
         }
