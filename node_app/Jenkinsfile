@@ -56,6 +56,36 @@ pipeline {
             }
         }
 
+        stage('Setup Node Environment') {
+            steps {
+                script {
+                    echo "🔧 Ensuring Node.js 18 + npm 9..."
+
+                    sh """
+                        set -e
+
+                        # Install Node 18 if not present
+                        if ! node -v | grep -q "v18"; then
+                            echo "Installing Node.js 18..."
+                            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+                            sudo apt-get install -y nodejs
+                        fi
+
+                        # Ensure npm v9
+                        CURRENT_NPM=\$(npm -v | cut -d '.' -f1)
+                        if [ "\$CURRENT_NPM" -ne "9" ]; then
+                            echo "Upgrading npm to v9..."
+                            sudo npm install -g npm@9
+                        fi
+
+                        # Verify
+                        echo "Node version: \$(node -v)"
+                        echo "NPM version: \$(npm -v)"
+                    """
+                }
+            }
+        }
+
         stage('Install Dependencies') {
             steps {
                 script {
@@ -65,8 +95,11 @@ pipeline {
                         set -e
                         cd ${BACKEND_DIR}
 
-                        node -v
-                        npm -v
+                        # Force IPv4 (avoid timeout issues)
+                        export NODE_OPTIONS=--dns-result-order=ipv4first
+
+                        npm config set registry http://registry.npmjs.org/
+                        npm config set strict-ssl false
 
                         if [ -f package-lock.json ]; then
                             echo "✅ Using npm ci"
@@ -103,13 +136,11 @@ pipeline {
                         set -e
                         cd ${BACKEND_DIR}
 
-                        # Install PM2 safely
                         if ! command -v pm2 > /dev/null; then
                             echo "Installing PM2..."
                             npm install -g pm2
                         fi
 
-                        # Start or reload app
                         if pm2 list | grep -q "${APP_NAME}"; then
                             echo "♻️ Reloading app..."
                             pm2 reload ${APP_NAME} --update-env
@@ -133,7 +164,7 @@ pipeline {
                     sh """
                         sleep 5
 
-                        curl -v http://localhost:3000/api || {
+                        curl -f http://localhost:3000/api || {
                             echo "❌ App is not responding"
                             exit 1
                         }
