@@ -1,0 +1,148 @@
+pipeline {
+    agent any
+
+    environment {
+        BASE_DIR    = "/opt/projects"
+        PROJECT_DIR = "${BASE_DIR}/webapplication-repo"
+        BACKEND_DIR = "${PROJECT_DIR}/backend"
+        APP_NAME    = "webapp"
+        REPO_URL    = "https://github.com/vijayqadevkraft/webapplication-repo.git"
+        BRANCH      = "main"
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+
+        stage('Setup Permissions') {
+            steps {
+                script {
+                    echo "🔐 Setting up directory permissions..."
+
+                    sh """
+                        set -e
+
+                        echo "Running as: \$(whoami)"
+
+                        # Create base directory
+                        sudo mkdir -p ${BASE_DIR}
+
+                        # Give ownership to Jenkins
+                        sudo chown -R jenkins:jenkins ${BASE_DIR}
+
+                        # Set proper permissions
+                        sudo chmod -R 755 ${BASE_DIR}
+
+                        ls -ld ${BASE_DIR}
+                    """
+                }
+            }
+        }
+
+        stage('Checkout Code') {
+            steps {
+                script {
+                    echo "📥 Cloning / Updating repository..."
+
+                    sh "mkdir -p ${PROJECT_DIR}"
+
+                    dir("${PROJECT_DIR}") {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${BRANCH}"]],
+                            userRemoteConfigs: [[
+                                url: "${REPO_URL}"
+                            ]]
+                        ])
+                    }
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    echo "📦 Installing dependencies..."
+
+                    sh """
+                        set -e
+                        cd ${BACKEND_DIR}
+                        npm ci
+                    """
+                }
+            }
+        }
+
+        stage('Build Application') {
+            steps {
+                script {
+                    echo "🏗️ Building application..."
+
+                    sh """
+                        set -e
+                        cd ${BACKEND_DIR}
+                        npm run build || echo "⚠️ No build step"
+                    """
+                }
+            }
+        }
+
+        stage('Deploy with PM2') {
+            steps {
+                script {
+                    echo "🚀 Deploying app..."
+
+                    sh """
+                        set -e
+                        cd ${BACKEND_DIR}
+
+                        # Install PM2 if not installed
+                        command -v pm2 || npm install -g pm2
+
+                        if pm2 list | grep -q "${APP_NAME}"; then
+                            echo "♻️ Reloading app..."
+                            pm2 reload ${APP_NAME} --update-env
+                        else
+                            echo "🆕 Starting app..."
+                            pm2 start server.js --name ${APP_NAME}
+                        fi
+
+                        pm2 save
+                        pm2 status
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    echo "🩺 Running health check..."
+
+                    sh """
+                        sleep 5
+                        curl -f http://localhost:3000/api || {
+                            echo "❌ App is not responding"
+                            exit 1
+                        }
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment completed successfully!"
+        }
+        failure {
+            echo "❌ Deployment failed. Check logs."
+        }
+        always {
+            echo "📋 Pipeline finished."
+        }
+    }
+}
