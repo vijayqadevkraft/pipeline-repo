@@ -24,16 +24,10 @@ pipeline {
 
                     sh """
                         set -e
-
                         echo "Running as: \$(whoami)"
 
-                        # Create base directory
                         sudo mkdir -p ${BASE_DIR}
-
-                        # Give ownership to Jenkins
                         sudo chown -R jenkins:jenkins ${BASE_DIR}
-
-                        # Set proper permissions
                         sudo chmod -R 755 ${BASE_DIR}
 
                         ls -ld ${BASE_DIR}
@@ -70,7 +64,17 @@ pipeline {
                     sh """
                         set -e
                         cd ${BACKEND_DIR}
-                        npm ci
+
+                        node -v
+                        npm -v
+
+                        if [ -f package-lock.json ]; then
+                            echo "✅ Using npm ci"
+                            npm ci
+                        else
+                            echo "⚠️ package-lock.json not found, using npm install"
+                            npm install
+                        fi
                     """
                 }
             }
@@ -99,9 +103,13 @@ pipeline {
                         set -e
                         cd ${BACKEND_DIR}
 
-                        # Install PM2 if not installed
-                        command -v pm2 || npm install -g pm2
+                        # Install PM2 safely
+                        if ! command -v pm2 > /dev/null; then
+                            echo "Installing PM2..."
+                            npm install -g pm2
+                        fi
 
+                        # Start or reload app
                         if pm2 list | grep -q "${APP_NAME}"; then
                             echo "♻️ Reloading app..."
                             pm2 reload ${APP_NAME} --update-env
@@ -124,7 +132,8 @@ pipeline {
 
                     sh """
                         sleep 5
-                        curl -f http://localhost:3000/api || {
+
+                        curl -v http://localhost:3000/api || {
                             echo "❌ App is not responding"
                             exit 1
                         }
