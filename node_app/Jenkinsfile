@@ -24,13 +24,9 @@ pipeline {
 
                     sh '''
                         set -e
-                        echo "Running as: $(whoami)"
-
                         sudo mkdir -p ${BASE_DIR}
                         sudo chown -R jenkins:jenkins ${BASE_DIR}
                         sudo chmod -R 755 ${BASE_DIR}
-
-                        ls -ld ${BASE_DIR}
                     '''
                 }
             }
@@ -39,7 +35,7 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 script {
-                    echo "📥 Cloning / Updating repository..."
+                    echo "📥 Cloning repository..."
 
                     sh "mkdir -p ${PROJECT_DIR}"
 
@@ -47,9 +43,7 @@ pipeline {
                         checkout([
                             $class: 'GitSCM',
                             branches: [[name: "*/${BRANCH}"]],
-                            userRemoteConfigs: [[
-                                url: "${REPO_URL}"
-                            ]]
+                            userRemoteConfigs: [[url: "${REPO_URL}"]]
                         ])
                     }
                 }
@@ -64,22 +58,18 @@ pipeline {
                     sh '''
                         set -e
 
-                        # Install Node 18 if not present
                         if ! node -v | grep -q "v18"; then
-                            echo "Installing Node.js 18..."
                             curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
                             sudo apt-get install -y nodejs
                         fi
 
-                        # Ensure npm v9
                         CURRENT_NPM=$(npm -v | cut -d '.' -f1)
                         if [ "$CURRENT_NPM" -ne "9" ]; then
-                            echo "Upgrading npm to v9..."
                             sudo npm install -g npm@9
                         fi
 
-                        echo "Node version: $(node -v)"
-                        echo "NPM version: $(npm -v)"
+                        node -v
+                        npm -v
                     '''
                 }
             }
@@ -96,15 +86,12 @@ pipeline {
 
                         export NODE_OPTIONS=--dns-result-order=ipv4first
 
-                        # Secure npm registry
                         npm config set registry https://registry.npmjs.org/
                         npm config set strict-ssl true
 
                         if [ -f package-lock.json ]; then
-                            echo "✅ Using npm ci"
                             npm ci
                         else
-                            echo "⚠️ package-lock.json not found, using npm install"
                             npm install
                         fi
                     '''
@@ -135,9 +122,8 @@ pipeline {
                         set -e
                         cd ${BACKEND_DIR}
 
-                        # Install PM2 with sudo (fix permission issue)
+                        # Install PM2 if not exists
                         if ! command -v pm2 > /dev/null; then
-                            echo "Installing PM2..."
                             sudo npm install -g pm2
                         fi
 
@@ -145,8 +131,42 @@ pipeline {
                         pm2 delete ${APP_NAME} || true
                         pm2 start server.js --name ${APP_NAME}
 
+                        # Save for auto-start
                         pm2 save
+
+                        # Setup startup (safe to run multiple times)
+                        pm2 startup systemd -u jenkins --hp /var/lib/jenkins || true
+
                         pm2 status
+                    '''
+                }
+            }
+        }
+
+        stage('Configure Nginx') {
+            steps {
+                script {
+                    echo "🌐 Configuring Nginx..."
+
+                    sh '''
+                        sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF'
+
+                        sudo nginx -t
+                        sudo systemctl restart nginx
                     '''
                 }
             }
@@ -158,12 +178,17 @@ pipeline {
                     echo "🩺 Running health check..."
 
                     sh '''
-                        sleep 10
+                        for i in {1..5}; do
+                            if curl -f http://localhost:3000/api; then
+                                echo "✅ App is healthy"
+                                exit 0
+                            fi
+                            echo "Retrying in 5 seconds..."
+                            sleep 5
+                        done
 
-                        curl -f http://localhost:3000/api || {
-                            echo "❌ App is not responding"
-                            exit 1
-                        }
+                        echo "❌ App failed health check"
+                        exit 1
                     '''
                 }
             }
