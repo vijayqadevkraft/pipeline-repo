@@ -122,19 +122,15 @@ pipeline {
                         set -e
                         cd ${BACKEND_DIR}
 
-                        # Install PM2 if not exists
                         if ! command -v pm2 > /dev/null; then
                             sudo npm install -g pm2
                         fi
 
-                        # Restart app cleanly
                         pm2 delete ${APP_NAME} || true
                         pm2 start server.js --name ${APP_NAME}
 
-                        # Save for auto-start
                         pm2 save
 
-                        # Setup startup (safe to run multiple times)
                         pm2 startup systemd -u jenkins --hp /var/lib/jenkins || true
 
                         pm2 status
@@ -157,10 +153,10 @@ server {
     location / {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Upgrade \\$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header Host \\$host;
+        proxy_cache_bypass \\$http_upgrade;
     }
 }
 EOF'
