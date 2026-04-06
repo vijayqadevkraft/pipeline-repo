@@ -19,71 +19,58 @@ pipeline {
 
     stages {
 
-        // ✅ 1. Setup + Folder Validation
+        // ✅ 1. Setup Directories
         stage('Setup & Validate Directories') {
             steps {
-                sh '''
-                    set -euo pipefail
+                sh '''#!/bin/bash
+set -euo pipefail
 
-                    echo "🔍 Validating directories..."
+echo "🔍 Validating directories..."
 
-                    if [ ! -d "${BASE_DIR}" ]; then
-                        echo "📁 Creating BASE_DIR..."
-                        sudo mkdir -p ${BASE_DIR}
-                    fi
+[ -d "${BASE_DIR}" ] || sudo mkdir -p ${BASE_DIR}
+[ -d "${BACKUP_DIR}" ] || sudo mkdir -p ${BACKUP_DIR}
 
-                    if [ ! -d "${BACKUP_DIR}" ]; then
-                        echo "📁 Creating BACKUP_DIR..."
-                        sudo mkdir -p ${BACKUP_DIR}
-                    fi
+sudo chown -R jenkins:jenkins ${BASE_DIR} ${BACKUP_DIR}
+sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
 
-                    sudo chown -R jenkins:jenkins ${BASE_DIR} ${BACKUP_DIR}
-                    sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
-
-                    echo "✅ Directory validation completed"
-                '''
+echo "✅ Directory ready"
+'''
             }
         }
 
-        // ✅ 2. Backup with Validation
+        // ✅ 2. Backup
         stage('Backup Current Application') {
             steps {
-                sh '''
-                    set -euo pipefail
+                sh '''#!/bin/bash
+set -euo pipefail
 
-                    echo "📦 Creating backup..."
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
 
-                    TIMESTAMP=$(date +%Y%m%d%H%M%S)
-                    BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
+mkdir -p $BACKUP_PATH
 
-                    mkdir -p $BACKUP_PATH
+if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
+    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
 
-                    if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
-                        cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
-
-                        if [ "$(ls -A $BACKUP_PATH)" ]; then
-                            echo "✅ Backup created at $BACKUP_PATH"
-                        else
-                            echo "❌ Backup failed (empty)"
-                            exit 1
-                        fi
-                    else
-                        echo "⚠️ No existing project to backup"
-                    fi
-                '''
+    if [ "$(ls -A $BACKUP_PATH)" ]; then
+        echo "✅ Backup created: $BACKUP_PATH"
+    else
+        echo "❌ Backup failed"
+        exit 1
+    fi
+else
+    echo "⚠️ No project found, skipping backup"
+fi
+'''
             }
         }
 
-        // ✅ 3. Checkout Code
+        // ✅ 3. Checkout
         stage('Checkout Code') {
             steps {
-                sh '''
-                    set -e
-
-                    if [ ! -d "${PROJECT_DIR}" ]; then
-                        mkdir -p ${PROJECT_DIR}
-                    fi
-                '''
+                sh '''#!/bin/bash
+[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}
+'''
 
                 dir("${PROJECT_DIR}") {
                     checkout([
@@ -95,108 +82,85 @@ pipeline {
             }
         }
 
-        // ✅ 4. Validate Backend Structure
+        // ✅ 4. Validate Backend
         stage('Validate Backend') {
             steps {
-                sh '''
-                    set -euo pipefail
+                sh '''#!/bin/bash
+set -euo pipefail
 
-                    echo "🔍 Validating backend structure..."
+[ -d "${BACKEND_DIR}" ] || { echo "❌ backend missing"; exit 1; }
+[ -f "${BACKEND_DIR}/server.js" ] || { echo "❌ server.js missing"; exit 1; }
+[ -f "${BACKEND_DIR}/package.json" ] || { echo "❌ package.json missing"; exit 1; }
 
-                    if [ ! -d "${BACKEND_DIR}" ]; then
-                        echo "❌ Backend directory missing!"
-                        exit 1
-                    fi
-
-                    if [ ! -f "${BACKEND_DIR}/server.js" ]; then
-                        echo "❌ server.js missing!"
-                        exit 1
-                    fi
-
-                    if [ ! -f "${BACKEND_DIR}/package.json" ]; then
-                        echo "❌ package.json missing!"
-                        exit 1
-                    fi
-
-                    echo "✅ Backend validation passed"
-                '''
+echo "✅ Backend valid"
+'''
             }
         }
 
         // ✅ 5. Setup Node
         stage('Setup Node') {
             steps {
-                sh '''
-                    set -e
+                sh '''#!/bin/bash
+set -e
 
-                    if ! node -v | grep -q "v18"; then
-                        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-                        sudo apt-get install -y nodejs
-                    fi
+if ! node -v | grep -q "v18"; then
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+fi
 
-                    sudo npm install -g npm@9
-                    node -v
-                    npm -v
-                '''
+sudo npm install -g npm@9
+'''
             }
         }
 
         // ✅ 6. Install Dependencies
         stage('Install Dependencies') {
             steps {
-                sh '''
-                    set -euo pipefail
-                    cd ${BACKEND_DIR}
-
-                    echo "📦 Installing dependencies..."
-                    npm install
-                '''
+                sh '''#!/bin/bash
+set -euo pipefail
+cd ${BACKEND_DIR}
+npm install
+'''
             }
         }
 
         // ✅ 7. Build
         stage('Build Application') {
             steps {
-                sh '''
-                    set -e
-                    cd ${BACKEND_DIR}
-
-                    echo "🏗️ Building..."
-                    npm run build || echo "⚠️ No build step"
-                '''
+                sh '''#!/bin/bash
+set -e
+cd ${BACKEND_DIR}
+npm run build || echo "No build step"
+'''
             }
         }
 
-        // ✅ 8. Safe PM2 Deployment (NO downtime)
+        // ✅ 8. Deploy (SAFE)
         stage('Deploy with PM2') {
             steps {
-                sh '''
-                    set -e
-                    cd ${BACKEND_DIR}
+                sh '''#!/bin/bash
+set -e
+cd ${BACKEND_DIR}
 
-                    if ! command -v pm2 > /dev/null; then
-                        sudo npm install -g pm2
-                    fi
+command -v pm2 >/dev/null || sudo npm install -g pm2
 
-                    pm2 describe ${APP_NAME} > /dev/null 2>&1
+if pm2 describe ${APP_NAME} >/dev/null 2>&1; then
+    echo "🔄 Reloading app"
+    pm2 reload ${APP_NAME}
+else
+    echo "🚀 Starting app"
+    pm2 start server.js --name ${APP_NAME}
+fi
 
-                    if [ $? -eq 0 ]; then
-                        echo "🔄 Reloading existing app..."
-                        pm2 reload ${APP_NAME}
-                    else
-                        echo "🚀 Starting new app..."
-                        pm2 start server.js --name ${APP_NAME}
-                    fi
-
-                    pm2 save
-                '''
+pm2 save
+'''
             }
         }
 
-        // ✅ 9. Configure Nginx
+        // ✅ 9. Nginx
         stage('Configure Nginx') {
             steps {
-                sh '''
+                sh '''#!/bin/bash
 sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
 server {
     listen 80;
@@ -204,10 +168,6 @@ server {
 
     location / {
         proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \\$host;
     }
 
     location /api {
@@ -216,31 +176,29 @@ server {
 }
 EOF'
 
-                    sudo nginx -t
-                    sudo systemctl restart nginx
-                '''
+sudo nginx -t
+sudo systemctl restart nginx
+'''
             }
         }
 
         // ✅ 10. Health Check
         stage('Health Check') {
             steps {
-                sh '''
-                    set -e
+                sh '''#!/bin/bash
+set -e
 
-                    echo "🩺 Running health check..."
+for i in {1..5}; do
+    if curl -f http://localhost:3000; then
+        echo "✅ App healthy"
+        exit 0
+    fi
+    sleep 5
+done
 
-                    for i in {1..5}; do
-                        if curl -f http://localhost:3000; then
-                            echo "✅ App healthy"
-                            exit 0
-                        fi
-                        sleep 5
-                    done
-
-                    echo "❌ Health check failed"
-                    exit 1
-                '''
+echo "❌ Health failed"
+exit 1
+'''
             }
         }
     }
@@ -248,39 +206,33 @@ EOF'
     // ✅ 11. ROLLBACK
     post {
         failure {
-            script {
-                echo "❌ Deployment failed! Starting rollback..."
+            steps {
+                sh '''#!/bin/bash
+set -e
 
-                sh '''
-                    set -e
+echo "❌ Rolling back..."
 
-                    LAST_BACKUP=$(ls -td ${BACKUP_DIR}/* 2>/dev/null | head -1)
+LAST_BACKUP=$(ls -td ${BACKUP_DIR}/* 2>/dev/null | head -1)
 
-                    if [ -z "$LAST_BACKUP" ]; then
-                        echo "❌ No backup found!"
-                        exit 1
-                    fi
+[ -z "$LAST_BACKUP" ] && { echo "No backup"; exit 1; }
 
-                    echo "♻️ Restoring from $LAST_BACKUP"
+rm -rf ${PROJECT_DIR}/*
+cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
 
-                    rm -rf ${PROJECT_DIR}/*
-                    cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
+cd ${BACKEND_DIR}
+npm install
 
-                    cd ${BACKEND_DIR}
-                    npm install
+pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
 
-                    pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
+curl -f http://localhost:3000
 
-                    sleep 5
-                    curl -f http://localhost:3000
-
-                    echo "✅ Rollback successful"
-                '''
+echo "✅ Rollback done"
+'''
             }
         }
 
         success {
-            echo "✅ Deployment successful!"
+            echo "✅ Deployment successful"
         }
 
         always {
