@@ -22,7 +22,7 @@ pipeline {
         // ✅ 1. Setup Directories
         stage('Setup & Validate Directories') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -euo pipefail
 
 echo "🔍 Validating directories..."
@@ -41,7 +41,7 @@ echo "✅ Directory ready"
         // ✅ 2. Backup
         stage('Backup Current Application') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -euo pipefail
 
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -52,12 +52,10 @@ mkdir -p $BACKUP_PATH
 if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
     cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
 
-    if [ "$(ls -A $BACKUP_PATH)" ]; then
-        echo "✅ Backup created: $BACKUP_PATH"
-    else
-        echo "❌ Backup failed"
-        exit 1
-    fi
+    # ⭐ create latest symlink (important for rollback)
+    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
+
+    echo "✅ Backup created: $BACKUP_PATH"
 else
     echo "⚠️ No project found, skipping backup"
 fi
@@ -68,9 +66,7 @@ fi
         // ✅ 3. Checkout
         stage('Checkout Code') {
             steps {
-                sh '''#!/bin/bash
-[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}
-'''
+                sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
 
                 dir("${PROJECT_DIR}") {
                     checkout([
@@ -85,7 +81,7 @@ fi
         // ✅ 4. Validate Backend
         stage('Validate Backend') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -euo pipefail
 
 [ -d "${BACKEND_DIR}" ] || { echo "❌ backend missing"; exit 1; }
@@ -100,7 +96,7 @@ echo "✅ Backend valid"
         // ✅ 5. Setup Node
         stage('Setup Node') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -e
 
 if ! node -v | grep -q "v18"; then
@@ -116,7 +112,7 @@ sudo npm install -g npm@9
         // ✅ 6. Install Dependencies
         stage('Install Dependencies') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -euo pipefail
 cd ${BACKEND_DIR}
 npm install
@@ -127,7 +123,7 @@ npm install
         // ✅ 7. Build
         stage('Build Application') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -e
 cd ${BACKEND_DIR}
 npm run build || echo "No build step"
@@ -135,10 +131,10 @@ npm run build || echo "No build step"
             }
         }
 
-        // ✅ 8. Deploy (SAFE)
+        // ✅ 8. Deploy
         stage('Deploy with PM2') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -e
 cd ${BACKEND_DIR}
 
@@ -160,7 +156,7 @@ pm2 save
         // ✅ 9. Nginx
         stage('Configure Nginx') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
 server {
     listen 80;
@@ -185,7 +181,7 @@ sudo systemctl restart nginx
         // ✅ 10. Health Check
         stage('Health Check') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
 set -e
 
 for i in {1..5}; do
@@ -203,18 +199,26 @@ exit 1
         }
     }
 
-    // ✅ 11. ROLLBACK
+    // ✅ 11. POST (FIXED ROLLBACK)
     post {
+
         failure {
-            steps {
-                sh '''#!/bin/bash
+            echo "❌ Deployment Failed → Starting Rollback"
+
+            script {
+                sh '''
 set -e
 
-echo "❌ Rolling back..."
+echo "🔄 Rolling back..."
 
-LAST_BACKUP=$(ls -td ${BACKUP_DIR}/* 2>/dev/null | head -1)
+LAST_BACKUP=${BACKUP_DIR}/latest
 
-[ -z "$LAST_BACKUP" ] && { echo "No backup"; exit 1; }
+if [ ! -d "$LAST_BACKUP" ]; then
+    echo "❌ No backup found"
+    exit 1
+fi
+
+echo "📦 Restoring from $LAST_BACKUP"
 
 rm -rf ${PROJECT_DIR}/*
 cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
@@ -224,9 +228,14 @@ npm install
 
 pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
 
-curl -f http://localhost:3000
+echo "🔍 Checking app after rollback..."
 
-echo "✅ Rollback done"
+if curl -f http://localhost:3000; then
+    echo "✅ Rollback successful"
+else
+    echo "❌ Rollback failed"
+    exit 1
+fi
 '''
             }
         }
