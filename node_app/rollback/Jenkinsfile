@@ -1,0 +1,27 @@
+pipeline {
+    agent any
+    stages {
+        stage('Rollback') {
+            steps {
+                sh '''
+                BACKUP_DIR="/opt/backup"
+                PROJECT_DIR="/opt/app/node_app"
+
+                LATEST=$(ls -t ${BACKUP_DIR} | head -n 1)
+
+                if [ -z "$LATEST" ]; then
+                    echo "No backup found"
+                    exit 1
+                fi
+
+                rm -rf ${PROJECT_DIR}
+                cp -r ${BACKUP_DIR}/$LATEST ${PROJECT_DIR}
+
+                pkill -f node || true
+                cd ${PROJECT_DIR}
+                nohup node server.js > app.log 2>&1 &
+                '''
+            }
+        }
+    }
+}
