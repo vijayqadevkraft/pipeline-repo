@@ -1,0 +1,260 @@
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_NAME = "webapplication-repo"
+        BASE_DIR     = "/opt/projects"
+        PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
+        BACKEND_DIR  = "${PROJECT_DIR}/backend"
+        BACKUP_DIR   = "/opt/backups/${PROJECT_NAME}"
+        APP_NAME     = "webapp"
+        REPO_URL     = "https://github.com/vijayqadevkraft/webapplication-repo.git"
+        BRANCH       = "main"
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+
+        // ✅ 1. Setup Directories (FIXED: removed pipefail)
+        stage('Setup & Validate Directories') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+echo "🔍 Validating directories..."
+
+[ -d "${BASE_DIR}" ] || sudo mkdir -p ${BASE_DIR}
+[ -d "${BACKUP_DIR}" ] || sudo mkdir -p ${BACKUP_DIR}
+
+sudo chown -R jenkins:jenkins ${BASE_DIR} ${BACKUP_DIR}
+sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
+
+echo "✅ Directory ready"
+'''
+            }
+        }
+
+        // ✅ 2. Backup (SAFE + ALWAYS CREATE LATEST)
+        stage('Backup Current Application') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
+
+mkdir -p $BACKUP_PATH
+
+if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
+    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
+
+    # ⭐ important
+    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
+
+    echo "✅ Backup created: $BACKUP_PATH"
+else
+    echo "⚠️ No project found, skipping backup"
+fi
+'''
+            }
+        }
+
+        // ✅ 3. Checkout
+        stage('Checkout Code') {
+            steps {
+                sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
+
+                dir("${PROJECT_DIR}") {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${BRANCH}"]],
+                        userRemoteConfigs: [[url: "${REPO_URL}"]]
+                    ])
+                }
+            }
+        }
+
+        // ✅ 4. Validate Backend
+        stage('Validate Backend') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+[ -d "${BACKEND_DIR}" ] || { echo "❌ backend missing"; exit 1; }
+[ -f "${BACKEND_DIR}/server.js" ] || { echo "❌ server.js missing"; exit 1; }
+[ -f "${BACKEND_DIR}/package.json" ] || { echo "❌ package.json missing"; exit 1; }
+
+echo "✅ Backend valid"
+'''
+            }
+        }
+
+        // ✅ 5. Setup Node
+        stage('Setup Node') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+if ! node -v | grep -q "v18"; then
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+fi
+
+sudo npm install -g npm@9
+'''
+            }
+        }
+
+        // ✅ 6. Install Dependencies
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+cd ${BACKEND_DIR}
+npm install
+'''
+            }
+        }
+
+        // ✅ 7. Build
+        stage('Build Application') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+cd ${BACKEND_DIR}
+npm run build || echo "No build step"
+'''
+            }
+        }
+
+        // ✅ 8. Deploy
+        stage('Deploy with PM2') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+cd ${BACKEND_DIR}
+
+command -v pm2 >/dev/null || sudo npm install -g pm2
+
+if pm2 describe ${APP_NAME} >/dev/null 2>&1; then
+    echo "🔄 Reloading app"
+    pm2 reload ${APP_NAME}
+else
+    echo "🚀 Starting app"
+    pm2 start server.js --name ${APP_NAME}
+fi
+
+pm2 save
+'''
+            }
+        }
+
+        // ✅ 9. Nginx
+        stage('Configure Nginx') {
+            steps {
+                sh '''
+#!/bin/bash
+sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://localhost:3000;
+    }
+
+    location /api {
+        proxy_pass http://localhost:3000;
+    }
+}
+EOF'
+
+sudo nginx -t
+sudo systemctl restart nginx
+'''
+            }
+        }
+
+        // ✅ 10. Health Check
+        stage('Health Check') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+for i in {1..5}; do
+    if curl -f http://localhost:3000; then
+        echo "✅ App healthy"
+        exit 0
+    fi
+    sleep 5
+done
+
+echo "❌ Health failed"
+exit 1
+'''
+            }
+        }
+    }
+
+    // ✅ 11. POST (FINAL FIXED ROLLBACK)
+    post {
+
+        failure {
+            echo "❌ Deployment Failed → Starting Rollback"
+
+            script {
+                sh '''
+#!/bin/bash
+set -e
+
+echo "🔄 Rolling back..."
+
+LAST_BACKUP=${BACKUP_DIR}/latest
+
+if [ ! -d "$LAST_BACKUP" ]; then
+    echo "⚠️ No backup found, skipping rollback"
+    exit 0   # ✅ important (do not fail again)
+fi
+
+echo "📦 Restoring from $LAST_BACKUP"
+
+rm -rf ${PROJECT_DIR}/*
+cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
+
+cd ${BACKEND_DIR}
+npm install
+
+pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
+
+echo "🔍 Checking app after rollback..."
+
+if curl -f http://localhost:3000; then
+    echo "✅ Rollback successful"
+else
+    echo "❌ Rollback failed"
+fi
+'''
+            }
+        }
+
+        success {
+            echo "✅ Deployment successful"
+        }
+
+        always {
+            echo "📋 Pipeline finished"
+        }
+    }
+}
