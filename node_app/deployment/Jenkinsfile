@@ -5,9 +5,9 @@ pipeline {
         BASE_DIR    = "/opt/projects"
         PROJECT_DIR = "${BASE_DIR}/webapplication-repo"
         BACKEND_DIR = "${PROJECT_DIR}/backend"
+        APP_NAME    = "webapp"
         REPO_URL    = "https://github.com/vijayqadevkraft/webapplication-repo.git"
         BRANCH      = "main"
-        APP_NAME    = "webapp"
     }
 
     options {
@@ -20,7 +20,9 @@ pipeline {
         // ✅ Setup Directory
         stage('Setup Directory') {
             steps {
-                sh 'mkdir -p ${BASE_DIR}'
+                sh '''
+                mkdir -p ${BASE_DIR}
+                '''
             }
         }
 
@@ -29,10 +31,12 @@ pipeline {
             steps {
                 sh '''
                 if [ -d "${PROJECT_DIR}/.git" ]; then
+                    echo "🔄 Updating repo..."
                     cd ${PROJECT_DIR}
                     git fetch origin
                     git reset --hard origin/${BRANCH}
                 else
+                    echo "📥 Cloning repo..."
                     rm -rf ${PROJECT_DIR}
                     git clone ${REPO_URL} ${PROJECT_DIR}
                 fi
@@ -50,26 +54,35 @@ pipeline {
             }
         }
 
-        // ✅ Deploy Application (STABLE)
+        // ✅ Deploy Application (FIXED)
         stage('Deploy Application') {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
 
-                echo "🚀 Starting application..."
+                echo "🚀 Deploying application..."
 
-                # Ensure PM2 exists
+                # Ensure PM2 installed
                 command -v pm2 >/dev/null || npm install -g pm2
 
-                # Restart app cleanly
+                # Stop old app
                 pm2 delete ${APP_NAME} || true
+
+                # Start app
                 pm2 start server.js --name ${APP_NAME}
 
-                # Save process
+                sleep 5
+
+                # Verify app running
+                pm2 list | grep ${APP_NAME} || {
+                    echo "❌ App failed to start"
+                    exit 1
+                }
+
+                # Save PM2 process (important)
                 pm2 save
 
-                echo "✅ PM2 running:"
-                pm2 list
+                echo "✅ App started successfully"
                 '''
             }
         }
@@ -84,25 +97,27 @@ pipeline {
             }
         }
 
-        // ✅ Health Check
+        // ✅ Health Check (STRONG)
         stage('Health Check') {
             steps {
                 sh '''
-                echo "🔍 Checking application..."
+                echo "🔍 Running health check..."
 
-                sleep 5
-
-                curl -f http://localhost:3000/health || {
-                    echo "❌ Backend failed"
-                    exit 1
-                }
+                for i in {1..5}; do
+                    if curl -f http://localhost:3000/health; then
+                        echo "✅ Backend OK"
+                        break
+                    fi
+                    echo "Retrying..."
+                    sleep 5
+                done
 
                 curl -f http://localhost || {
                     echo "❌ Nginx failed"
                     exit 1
                 }
 
-                echo "✅ Application is running successfully"
+                echo "✅ Deployment verified"
                 '''
             }
         }
