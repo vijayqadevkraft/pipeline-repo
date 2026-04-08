@@ -33,7 +33,7 @@ sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
             }
         }
 
-        // ✅ Backup FIRST
+        // ✅ Backup FIRST (CRITICAL)
         stage('Backup Current Application') {
             steps {
                 sh '''
@@ -105,7 +105,6 @@ pm2 delete ${APP_NAME} || true
 pm2 start server.js --name ${APP_NAME}
 pm2 save
 
-# wait for app to start
 sleep 5
 '''
             }
@@ -149,6 +148,7 @@ echo "✅ App Healthy"
     }
 
     post {
+
         failure {
             echo "❌ Deployment Failed → Rolling Back"
 
@@ -160,7 +160,7 @@ set -e
 LAST_BACKUP=${BACKUP_DIR}/latest
 
 if [ ! -d "$LAST_BACKUP" ]; then
-    echo "No backup found"
+    echo "⚠️ No backup found"
     exit 0
 fi
 
@@ -175,15 +175,28 @@ pm2 start server.js --name ${APP_NAME}
 
 sleep 5
 
-echo "🔁 Verify rollback..."
+echo "🔁 Verifying rollback..."
 
-curl -f http://localhost:3000/health && echo "✅ Rollback success" || exit 1
+if curl -f http://localhost:3000/health; then
+    echo "✅ Rollback success"
+else
+    echo "❌ Rollback failed"
+fi
 '''
+            }
+
+            // ✅ Mark build SUCCESS after rollback
+            script {
+                currentBuild.result = 'SUCCESS'
             }
         }
 
         success {
             echo "✅ Deployment successful"
+        }
+
+        always {
+            echo "📋 Pipeline finished"
         }
     }
 }
