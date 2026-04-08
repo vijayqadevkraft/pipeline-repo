@@ -1,13 +1,28 @@
 pipeline {
     agent any
+
+    environment {
+        PROJECT_DIR = "/opt/projects/webapplication-repo"
+        BACKEND_DIR = "${PROJECT_DIR}/backend"
+        APP_NAME    = "webapp"
+    }
+
     stages {
-        stage('Restart') {
+        stage('Restart Application') {
             steps {
                 sh '''
-                pkill -f node || true
-                cd /opt/app/node_app
-                nohup node server.js > app.log 2>&1 &
-                '''
+#!/bin/bash
+
+pm2 restart ${APP_NAME} || {
+    echo "App not running → starting fresh"
+    cd ${BACKEND_DIR}
+    pm2 start server.js --name ${APP_NAME}
+}
+
+pm2 save
+
+echo "🔄 Application restarted"
+'''
             }
         }
     }
