@@ -17,7 +17,7 @@ pipeline {
 
     stages {
 
-        // ✅ Setup Directory (No sudo needed if pre-configured)
+        // ✅ Setup Directory
         stage('Setup Directory') {
             steps {
                 sh '''
@@ -44,12 +44,19 @@ pipeline {
             }
         }
 
-        // ✅ Install Dependencies
+        // ✅ Install Only Required Dependencies
         stage('Install Dependencies') {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
-                npm install
+
+                echo "📦 Installing production dependencies..."
+
+                if [ -f package-lock.json ]; then
+                    npm ci --only=production
+                else
+                    npm install --production
+                fi
                 '''
             }
         }
