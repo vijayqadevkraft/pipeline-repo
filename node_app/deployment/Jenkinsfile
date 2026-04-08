@@ -26,7 +26,7 @@ pipeline {
             }
         }
 
-        // ✅ Checkout Code (FIXED)
+        // ✅ Checkout Code
         stage('Checkout Code') {
             steps {
                 sh '''
@@ -44,33 +44,49 @@ pipeline {
             }
         }
 
-        // ✅ Install Only Required Dependencies
+        // ✅ Install Dependencies
         stage('Install Dependencies') {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
 
-                echo "📦 Installing production dependencies..."
+                echo "📂 Current directory:"
+                pwd
+                ls
 
-                if [ -f package-lock.json ]; then
-                    npm ci --only=production
-                else
-                    npm install --production
-                fi
+                echo "📦 Installing dependencies..."
+                npm install
                 '''
             }
         }
 
-        // ✅ Start Application
+        // ✅ Start Application (FIXED)
         stage('Start Application') {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
 
+                echo "🚀 Starting application..."
+                pwd
+                ls
+
+                # Install PM2 if not exists
                 command -v pm2 >/dev/null || npm install -g pm2
 
+                # Kill old app
                 pm2 delete ${APP_NAME} || true
+
+                # Start new app
                 pm2 start server.js --name ${APP_NAME}
+
+                sleep 5
+
+                # Verify app started
+                pm2 list | grep ${APP_NAME} || {
+                    echo "❌ App failed to start"
+                    exit 1
+                }
+
                 pm2 save
                 '''
             }
@@ -94,8 +110,15 @@ pipeline {
 
                 sleep 5
 
-                curl -f http://localhost:3000 || exit 1
-                curl -f http://localhost || exit 1
+                curl -f http://localhost:3000/health || {
+                    echo "❌ Backend not reachable"
+                    exit 1
+                }
+
+                curl -f http://localhost || {
+                    echo "❌ Nginx not routing"
+                    exit 1
+                }
 
                 echo "✅ Application is running successfully"
                 '''
