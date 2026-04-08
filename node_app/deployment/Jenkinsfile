@@ -19,42 +19,23 @@ pipeline {
 
     stages {
 
-        // ✅ 1. Setup Directories
+        // ✅ 1. Setup
         stage('Setup & Validate Directories') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
 
-echo "🔍 Validating directories..."
-
 [ -d "${BASE_DIR}" ] || sudo mkdir -p ${BASE_DIR}
 [ -d "${BACKUP_DIR}" ] || sudo mkdir -p ${BACKUP_DIR}
 
 sudo chown -R jenkins:jenkins ${BASE_DIR} ${BACKUP_DIR}
 sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
-
-echo "✅ Directory ready"
 '''
             }
         }
 
-        // ✅ 2. Checkout Code
-        stage('Checkout Code') {
-            steps {
-                sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
-
-                dir("${PROJECT_DIR}") {
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: "*/${BRANCH}"]],
-                        userRemoteConfigs: [[url: "${REPO_URL}"]]
-                    ])
-                }
-            }
-        }
-
-        // ✅ 3. Backup AFTER checkout
+        // ✅ 2. Backup FIRST (CRITICAL)
         stage('Backup Current Application') {
             steps {
                 sh '''
@@ -73,13 +54,28 @@ if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
 
     echo "✅ Backup created: $BACKUP_PATH"
 
-    # Keep only last 2 backups
+    # keep only 2 backups
     cd ${BACKUP_DIR}
     ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
 else
-    echo "⚠️ No project found, skipping backup"
+    echo "⚠️ No project to backup"
 fi
 '''
+            }
+        }
+
+        // ✅ 3. Checkout
+        stage('Checkout Code') {
+            steps {
+                sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
+
+                dir("${PROJECT_DIR}") {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${BRANCH}"]],
+                        userRemoteConfigs: [[url: "${REPO_URL}"]]
+                    ])
+                }
             }
         }
 
@@ -99,7 +95,7 @@ echo "✅ Backend valid"
             }
         }
 
-        // ✅ 5. Setup Node
+        // ✅ 5. Node Setup
         stage('Setup Node') {
             steps {
                 sh '''
@@ -116,7 +112,7 @@ sudo npm install -g npm@9
             }
         }
 
-        // ✅ 6. Install Dependencies
+        // ✅ 6. Install
         stage('Install Dependencies') {
             steps {
                 sh '''
@@ -140,7 +136,7 @@ npm run build || echo "No build step"
             }
         }
 
-        // ✅ 8. Deploy with PM2
+        // ✅ 8. Deploy
         stage('Deploy with PM2') {
             steps {
                 sh '''
@@ -151,10 +147,8 @@ cd ${BACKEND_DIR}
 command -v pm2 >/dev/null || sudo npm install -g pm2
 
 if pm2 describe ${APP_NAME} >/dev/null 2>&1; then
-    echo "🔄 Reloading app"
     pm2 reload ${APP_NAME}
 else
-    echo "🚀 Starting app"
     pm2 start server.js --name ${APP_NAME}
 fi
 
@@ -163,7 +157,7 @@ pm2 save
             }
         }
 
-        // ✅ 9. Configure Nginx
+        // ✅ 9. Nginx
         stage('Configure Nginx') {
             steps {
                 sh '''
@@ -189,14 +183,20 @@ sudo systemctl restart nginx
             }
         }
 
-        // ✅ 10. End-to-End Health Check
+        // ✅ 10. FULL E2E VALIDATION
         stage('End-to-End Health Check') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
 
-echo "🔍 Running End-to-End Checks..."
+echo "🔍 Running FULL E2E checks..."
+
+# PM2 running
+pm2 list | grep ${APP_NAME} || { echo "❌ PM2 not running"; exit 1; }
+
+# Port check
+netstat -tulnp | grep 3000 || { echo "❌ Port 3000 not listening"; exit 1; }
 
 # Backend
 curl -f http://localhost:3000/health || { echo "❌ Backend failed"; exit 1; }
@@ -204,19 +204,18 @@ curl -f http://localhost:3000/health || { echo "❌ Backend failed"; exit 1; }
 # API
 curl -f http://localhost:3000/api || { echo "❌ API failed"; exit 1; }
 
-# Frontend
-curl -f http://localhost:3000 || { echo "❌ Frontend failed"; exit 1; }
+# Frontend HTML
+curl -s http://localhost:3000 | grep "html" || { echo "❌ Frontend failed"; exit 1; }
 
 # Nginx
 curl -f http://localhost || { echo "❌ Nginx failed"; exit 1; }
 
-echo "✅ Full Application Healthy"
+echo "✅ FULL APPLICATION HEALTHY"
 '''
             }
         }
     }
 
-    // ✅ 11. Rollback
     post {
         failure {
             echo "❌ Deployment Failed → Rolling Back"
