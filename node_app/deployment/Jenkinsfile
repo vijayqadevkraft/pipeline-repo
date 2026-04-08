@@ -17,7 +17,7 @@ pipeline {
 
     stages {
 
-        // ✅ Setup Directory
+        // ✅ Stage 1: Setup Directory
         stage('Setup Directory') {
             steps {
                 sh '''
@@ -26,7 +26,7 @@ pipeline {
             }
         }
 
-        // ✅ Checkout Code
+        // ✅ Stage 2: Checkout Code
         stage('Checkout Code') {
             steps {
                 sh '''
@@ -44,7 +44,7 @@ pipeline {
             }
         }
 
-        // ✅ Install Dependencies
+        // ✅ Stage 3: Install Dependencies
         stage('Install Dependencies') {
             steps {
                 sh '''
@@ -54,7 +54,7 @@ pipeline {
             }
         }
 
-        // ✅ Deploy Application (FIXED)
+        // ✅ Stage 4: Deploy Application (ZERO DOWNTIME)
         stage('Deploy Application') {
             steps {
                 sh '''
@@ -62,32 +62,31 @@ pipeline {
 
                 echo "🚀 Deploying application..."
 
-                # Ensure PM2 installed
+                # Ensure PM2 is installed
                 command -v pm2 >/dev/null || npm install -g pm2
 
-                # Stop old app
-                pm2 delete ${APP_NAME} || true
+                # ✅ Zero-downtime deploy:
+                #    First run  → pm2 reload fails → pm2 start (fresh start)
+                #    Next runs  → pm2 reload succeeds (no downtime, no 502)
+                pm2 reload ${APP_NAME} --update-env || pm2 start server.js --name ${APP_NAME}
 
-                # Start app
-                pm2 start server.js --name ${APP_NAME}
+                sleep 3
 
-                sleep 5
-
-                # Verify app running
+                # Verify app is running
                 pm2 list | grep ${APP_NAME} || {
                     echo "❌ App failed to start"
                     exit 1
                 }
 
-                # Save PM2 process (important)
+                # Save PM2 process list
                 pm2 save
 
-                echo "✅ App started successfully"
+                echo "✅ App deployed successfully"
                 '''
             }
         }
 
-        // ✅ Restart Nginx
+        // ✅ Stage 5: Restart Nginx
         stage('Restart Nginx') {
             steps {
                 sh '''
@@ -97,23 +96,23 @@ pipeline {
             }
         }
 
-        // ✅ Health Check (STRONG)
+        // ✅ Stage 6: Health Check
         stage('Health Check') {
             steps {
                 sh '''
                 echo "🔍 Running health check..."
 
                 for i in {1..5}; do
-                    if curl -f http://localhost:3000/health; then
+                    if curl -sf http://localhost:3000/health; then
                         echo "✅ Backend OK"
                         break
                     fi
-                    echo "Retrying..."
+                    echo "⏳ Attempt $i failed, retrying in 5s..."
                     sleep 5
                 done
 
                 curl -f http://localhost || {
-                    echo "❌ Nginx failed"
+                    echo "❌ Nginx check failed"
                     exit 1
                 }
 
@@ -121,6 +120,7 @@ pipeline {
                 '''
             }
         }
+
     }
 
     post {
@@ -129,6 +129,7 @@ pipeline {
         }
         failure {
             echo "❌ Deployment Failed"
+            sh 'pm2 logs ${APP_NAME} --lines 20 --nostream || true'
         }
         always {
             echo "📋 Pipeline Finished"
