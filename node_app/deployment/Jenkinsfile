@@ -20,9 +20,7 @@ pipeline {
         // ✅ Setup Directory
         stage('Setup Directory') {
             steps {
-                sh '''
-                mkdir -p ${BASE_DIR}
-                '''
+                sh 'mkdir -p ${BASE_DIR}'
             }
         }
 
@@ -31,12 +29,10 @@ pipeline {
             steps {
                 sh '''
                 if [ -d "${PROJECT_DIR}/.git" ]; then
-                    echo "🔄 Updating existing repo..."
                     cd ${PROJECT_DIR}
                     git fetch origin
                     git reset --hard origin/${BRANCH}
                 else
-                    echo "📥 Fresh clone..."
                     rm -rf ${PROJECT_DIR}
                     git clone ${REPO_URL} ${PROJECT_DIR}
                 fi
@@ -49,45 +45,31 @@ pipeline {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
-
-                echo "📂 Current directory:"
-                pwd
-                ls
-
-                echo "📦 Installing dependencies..."
                 npm install
                 '''
             }
         }
 
-        // ✅ Start Application (FIXED)
-        stage('Start Application') {
+        // ✅ Deploy Application (STABLE)
+        stage('Deploy Application') {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
 
                 echo "🚀 Starting application..."
-                pwd
-                ls
 
-                # Install PM2 if not exists
+                # Ensure PM2 exists
                 command -v pm2 >/dev/null || npm install -g pm2
 
-                # Kill old app
+                # Restart app cleanly
                 pm2 delete ${APP_NAME} || true
-
-                # Start new app
                 pm2 start server.js --name ${APP_NAME}
 
-                sleep 5
-
-                # Verify app started
-                pm2 list | grep ${APP_NAME} || {
-                    echo "❌ App failed to start"
-                    exit 1
-                }
-
+                # Save process
                 pm2 save
+
+                echo "✅ PM2 running:"
+                pm2 list
                 '''
             }
         }
@@ -111,12 +93,12 @@ pipeline {
                 sleep 5
 
                 curl -f http://localhost:3000/health || {
-                    echo "❌ Backend not reachable"
+                    echo "❌ Backend failed"
                     exit 1
                 }
 
                 curl -f http://localhost || {
-                    echo "❌ Nginx not routing"
+                    echo "❌ Nginx failed"
                     exit 1
                 }
 
