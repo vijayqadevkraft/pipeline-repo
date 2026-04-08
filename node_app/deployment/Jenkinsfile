@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        PROJECT_DIR = "/opt/projects/webapplication-repo/backend"
         BASE_DIR    = "/opt/projects"
+        PROJECT_DIR = "/opt/projects/webapplication-repo/backend"
         REPO_URL    = "https://github.com/vijayqadevkraft/webapplication-repo.git"
         BRANCH      = "main"
         APP_NAME    = "webapp"
@@ -16,17 +16,15 @@ pipeline {
 
     stages {
 
-        // ✅ Setup Directory with Permissions
+        // ✅ Setup Permissions
         stage('Setup Permissions') {
             steps {
                 sh '''
                 # Create base directory if not exists
                 [ -d "${BASE_DIR}" ] || sudo mkdir -p ${BASE_DIR}
 
-                # Set ownership to Jenkins user
+                # Set ownership
                 sudo chown -R jenkins:jenkins ${BASE_DIR}
-
-                # Set permissions
                 sudo chmod -R 755 ${BASE_DIR}
 
                 # Create project directory
@@ -35,15 +33,19 @@ pipeline {
             }
         }
 
-        // ✅ Checkout Code
+        // ✅ Checkout Code (FIXED)
         stage('Checkout Code') {
             steps {
                 sh '''
                 if [ ! -d "${PROJECT_DIR}/.git" ]; then
+                    echo "📥 Fresh clone..."
+                    rm -rf ${PROJECT_DIR}/*
                     git clone ${REPO_URL} ${PROJECT_DIR}
                 else
+                    echo "🔄 Pull latest code..."
                     cd ${PROJECT_DIR}
-                    git pull origin ${BRANCH}
+                    git fetch origin
+                    git reset --hard origin/${BRANCH}
                 fi
                 '''
             }
@@ -59,7 +61,7 @@ pipeline {
             }
         }
 
-        // ✅ Start App
+        // ✅ Start Application
         stage('Start Application') {
             steps {
                 sh '''
@@ -94,10 +96,11 @@ pipeline {
                 sleep 5
 
                 pm2 list
+
                 curl -f http://localhost:3000 || exit 1
                 curl -f http://localhost || exit 1
 
-                echo "✅ App is running successfully"
+                echo "✅ Application is running"
                 '''
             }
         }
