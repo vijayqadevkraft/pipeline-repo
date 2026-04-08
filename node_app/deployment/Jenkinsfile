@@ -5,9 +5,9 @@ pipeline {
         BASE_DIR    = "/opt/projects"
         PROJECT_DIR = "${BASE_DIR}/webapplication-repo"
         BACKEND_DIR = "${PROJECT_DIR}/backend"
-        APP_NAME    = "webapp"
         REPO_URL    = "https://github.com/vijayqadevkraft/webapplication-repo.git"
         BRANCH      = "main"
+        APP_NAME    = "webapp"
     }
 
     options {
@@ -17,28 +17,27 @@ pipeline {
 
     stages {
 
-        // ✅ Setup (ONLY FIRST TIME NEEDED)
+        // ✅ Setup Directory (No sudo needed if pre-configured)
         stage('Setup Directory') {
             steps {
                 sh '''
                 mkdir -p ${BASE_DIR}
-                mkdir -p ${PROJECT_DIR}
                 '''
             }
         }
 
-        // ✅ Checkout Code (FIXED PROPERLY)
+        // ✅ Checkout Code (FIXED)
         stage('Checkout Code') {
             steps {
                 sh '''
                 if [ -d "${PROJECT_DIR}/.git" ]; then
-                    echo "🔄 Updating repo..."
+                    echo "🔄 Updating existing repo..."
                     cd ${PROJECT_DIR}
                     git fetch origin
                     git reset --hard origin/${BRANCH}
                 else
                     echo "📥 Fresh clone..."
-                    rm -rf ${PROJECT_DIR}/*
+                    rm -rf ${PROJECT_DIR}
                     git clone ${REPO_URL} ${PROJECT_DIR}
                 fi
                 '''
@@ -50,20 +49,13 @@ pipeline {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
-
-                export NODE_OPTIONS=--dns-result-order=ipv4first
-
-                if [ -f package-lock.json ]; then
-                    npm ci
-                else
-                    npm install
-                fi
+                npm install
                 '''
             }
         }
 
-        // ✅ Start / Restart App
-        stage('Deploy Application') {
+        // ✅ Start Application
+        stage('Start Application') {
             steps {
                 sh '''
                 cd ${BACKEND_DIR}
@@ -73,13 +65,11 @@ pipeline {
                 pm2 delete ${APP_NAME} || true
                 pm2 start server.js --name ${APP_NAME}
                 pm2 save
-
-                pm2 list
                 '''
             }
         }
 
-        // ✅ Restart Nginx (SAFE)
+        // ✅ Restart Nginx
         stage('Restart Nginx') {
             steps {
                 sh '''
@@ -89,24 +79,18 @@ pipeline {
             }
         }
 
-        // ✅ Health Check (STRONG)
+        // ✅ Health Check
         stage('Health Check') {
             steps {
                 sh '''
-                echo "🔍 Checking app..."
+                echo "🔍 Checking application..."
 
-                for i in {1..5}; do
-                    if curl -f http://localhost:3000; then
-                        echo "✅ Backend OK"
-                        break
-                    fi
-                    echo "Retrying..."
-                    sleep 5
-                done
+                sleep 5
 
+                curl -f http://localhost:3000 || exit 1
                 curl -f http://localhost || exit 1
 
-                echo "✅ Deployment Verified"
+                echo "✅ Application is running successfully"
                 '''
             }
         }
