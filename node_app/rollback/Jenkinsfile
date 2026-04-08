@@ -1,26 +1,42 @@
 pipeline {
     agent any
+
+    environment {
+        PROJECT_DIR = "/opt/projects/webapplication-repo"
+        BACKUP_DIR  = "/opt/backups/webapplication-repo"
+        BACKEND_DIR = "${PROJECT_DIR}/backend"
+        APP_NAME    = "webapp"
+    }
+
     stages {
-        stage('Rollback') {
+        stage('Rollback to Last Backup') {
             steps {
                 sh '''
-                BACKUP_DIR="/opt/backup"
-                PROJECT_DIR="/opt/app/node_app"
+#!/bin/bash
+set -e
 
-                LATEST=$(ls -t ${BACKUP_DIR} | head -n 1)
+LAST_BACKUP=${BACKUP_DIR}/latest
 
-                if [ -z "$LATEST" ]; then
-                    echo "No backup found"
-                    exit 1
-                fi
+if [ ! -d "$LAST_BACKUP" ]; then
+    echo "❌ No backup found"
+    exit 1
+fi
 
-                rm -rf ${PROJECT_DIR}
-                cp -r ${BACKUP_DIR}/$LATEST ${PROJECT_DIR}
+rm -rf ${PROJECT_DIR}/*
+cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
 
-                pkill -f node || true
-                cd ${PROJECT_DIR}
-                nohup node server.js > app.log 2>&1 &
-                '''
+cd ${BACKEND_DIR}
+npm install
+
+pm2 delete ${APP_NAME} || true
+pm2 start server.js --name ${APP_NAME}
+
+sleep 5
+
+curl -f http://localhost:3000/health
+
+echo "✅ Rollback successful"
+'''
             }
         }
     }
