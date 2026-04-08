@@ -39,40 +39,7 @@ echo "✅ Directory ready"
             }
         }
 
-        // ✅ 2. Backup (UPDATED)
-        stage('Backup Current Application') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
-
-# 🔹 Simple timestamp
-TIMESTAMP=$(date +%H%M%S)
-
-BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
-
-mkdir -p $BACKUP_PATH
-
-if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
-    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
-
-    # Update latest symlink
-    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
-
-    echo "✅ Backup created: $BACKUP_PATH"
-
-    # 🔹 Keep only last 2 backups
-    cd ${BACKUP_DIR}
-    ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
-
-else
-    echo "⚠️ No project found, skipping backup"
-fi
-'''
-            }
-        }
-
-        // ✅ 3. Checkout Code
+        // ✅ 2. Checkout Code
         stage('Checkout Code') {
             steps {
                 sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
@@ -84,6 +51,35 @@ fi
                         userRemoteConfigs: [[url: "${REPO_URL}"]]
                     ])
                 }
+            }
+        }
+
+        // ✅ 3. Backup AFTER checkout
+        stage('Backup Current Application') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+TIMESTAMP=$(date +%H%M%S)
+BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
+
+mkdir -p $BACKUP_PATH
+
+if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
+    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
+
+    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
+
+    echo "✅ Backup created: $BACKUP_PATH"
+
+    # Keep only last 2 backups
+    cd ${BACKUP_DIR}
+    ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
+else
+    echo "⚠️ No project found, skipping backup"
+fi
+'''
             }
         }
 
@@ -193,49 +189,49 @@ sudo systemctl restart nginx
             }
         }
 
-        // ✅ 10. Health Check
-        stage('Health Check') {
+        // ✅ 10. End-to-End Health Check
+        stage('End-to-End Health Check') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
 
-for i in {1..5}; do
-    if curl -f http://localhost:3000; then
-        echo "✅ App healthy"
-        exit 0
-    fi
-    sleep 5
-done
+echo "🔍 Running End-to-End Checks..."
 
-echo "❌ Health failed"
-exit 1
+# Backend
+curl -f http://localhost:3000/health || { echo "❌ Backend failed"; exit 1; }
+
+# API
+curl -f http://localhost:3000/api || { echo "❌ API failed"; exit 1; }
+
+# Frontend
+curl -f http://localhost:3000 || { echo "❌ Frontend failed"; exit 1; }
+
+# Nginx
+curl -f http://localhost || { echo "❌ Nginx failed"; exit 1; }
+
+echo "✅ Full Application Healthy"
 '''
             }
         }
     }
 
-    // ✅ 11. POST (Rollback)
+    // ✅ 11. Rollback
     post {
-
         failure {
-            echo "❌ Deployment Failed → Starting Rollback"
+            echo "❌ Deployment Failed → Rolling Back"
 
             script {
                 sh '''
 #!/bin/bash
 set -e
 
-echo "🔄 Rolling back..."
-
 LAST_BACKUP=${BACKUP_DIR}/latest
 
 if [ ! -d "$LAST_BACKUP" ]; then
-    echo "⚠️ No backup found, skipping rollback"
+    echo "⚠️ No backup found"
     exit 0
 fi
-
-echo "📦 Restoring from $LAST_BACKUP"
 
 rm -rf ${PROJECT_DIR}/*
 cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
@@ -245,13 +241,9 @@ npm install
 
 pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
 
-echo "🔍 Checking app after rollback..."
+echo "🔁 Verifying rollback..."
 
-if curl -f http://localhost:3000; then
-    echo "✅ Rollback successful"
-else
-    echo "❌ Rollback failed"
-fi
+curl -f http://localhost:3000/health && echo "✅ Rollback success" || echo "❌ Rollback failed"
 '''
             }
         }
