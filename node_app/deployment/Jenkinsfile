@@ -6,7 +6,6 @@ pipeline {
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
         BACKEND_DIR  = "${PROJECT_DIR}/backend"
-        BACKUP_DIR   = "/opt/backups/${PROJECT_NAME}"
         APP_NAME     = "webapp"
         REPO_URL     = "https://github.com/vijayqadevkraft/webapplication-repo.git"
         BRANCH       = "main"
@@ -14,53 +13,13 @@ pipeline {
 
     options {
         timestamps()
-        disableConcurrentBuilds()
     }
 
     stages {
 
-        // ✅ Setup
-        stage('Setup & Validate Directories') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
-[ -d "${BASE_DIR}" ] || sudo mkdir -p ${BASE_DIR}
-[ -d "${BACKUP_DIR}" ] || sudo mkdir -p ${BACKUP_DIR}
-sudo chown -R jenkins:jenkins ${BASE_DIR} ${BACKUP_DIR}
-sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
-'''
-            }
-        }
-
-        // ✅ Backup FIRST (CRITICAL)
-        stage('Backup Current Application') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
-
-TIMESTAMP=$(date +%H%M%S)
-BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
-mkdir -p $BACKUP_PATH
-
-if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
-    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
-    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
-    echo "✅ Backup created: $BACKUP_PATH"
-
-    cd ${BACKUP_DIR}
-    ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
-fi
-'''
-            }
-        }
-
         // ✅ Checkout
         stage('Checkout Code') {
             steps {
-                sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
-
                 dir("${PROJECT_DIR}") {
                     checkout([
                         $class: 'GitSCM',
@@ -68,18 +27,6 @@ fi
                         userRemoteConfigs: [[url: "${REPO_URL}"]]
                     ])
                 }
-            }
-        }
-
-        // ✅ Validate
-        stage('Validate Backend') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
-[ -f "${BACKEND_DIR}/server.js" ] || exit 1
-[ -f "${BACKEND_DIR}/package.json" ] || exit 1
-'''
             }
         }
 
@@ -93,106 +40,103 @@ npm install
             }
         }
 
-        // ✅ Deploy
-        stage('Deploy with PM2') {
+        // ✅ Detect Current Running Port
+        stage('Detect Current App') {
+            steps {
+                script {
+                    env.CURRENT_PORT = sh(
+                        script: "ss -tuln | grep 3000 && echo 3000 || echo 3001",
+                        returnStdout: true
+                    ).trim()
+
+                    if (env.CURRENT_PORT == "3000") {
+                        env.NEW_PORT = "3001"
+                    } else {
+                        env.NEW_PORT = "3000"
+                    }
+
+                    echo "Current Port: ${env.CURRENT_PORT}"
+                    echo "New Port: ${env.NEW_PORT}"
+                }
+            }
+        }
+
+        // ✅ Deploy New Version (NO IMPACT)
+        stage('Deploy New Version') {
             steps {
                 sh '''
 cd ${BACKEND_DIR}
 
-command -v pm2 >/dev/null || sudo npm install -g pm2
+pm2 delete webapp-${NEW_PORT} || true
 
-pm2 delete ${APP_NAME} || true
-pm2 start server.js --name ${APP_NAME}
-pm2 save
+PORT=${NEW_PORT} pm2 start server.js --name webapp-${NEW_PORT}
 
 sleep 5
 '''
             }
         }
 
-        // ✅ Nginx
-        stage('Configure Nginx') {
-            steps {
-                sh '''
-sudo nginx -t
-sudo systemctl restart nginx
-'''
-            }
-        }
-
-        // ✅ FULL E2E CHECK
-        stage('End-to-End Health Check') {
+        // ✅ Validate New App BEFORE Switch
+        stage('Validate New Version') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
 
-echo "🔍 Running E2E checks..."
+echo "🔍 Validating new app on port ${NEW_PORT}..."
 
-pm2 list | grep ${APP_NAME} || exit 1
+curl -f http://localhost:${NEW_PORT}/health
+curl -f http://localhost:${NEW_PORT}/api
+curl -s http://localhost:${NEW_PORT} | grep "html"
 
-ss -tuln | grep 3000 || {
-    echo "❌ Port 3000 not listening"
-    exit 1
+echo "✅ New version is healthy"
+'''
+            }
+        }
+
+        // ✅ Switch Traffic (ZERO DOWNTIME)
+        stage('Switch Traffic (Nginx)') {
+            steps {
+                sh '''
+sudo bash -c "cat > /etc/nginx/sites-available/default <<EOF
+server {
+    listen 80;
+
+    location / {
+        proxy_pass http://localhost:${NEW_PORT};
+    }
+
+    location /api {
+        proxy_pass http://localhost:${NEW_PORT};
+    }
 }
+EOF"
 
-curl -f http://localhost:3000/health || exit 1
-curl -f http://localhost:3000/api || exit 1
-curl -s http://localhost:3000 | grep "html" || exit 1
-curl -f http://localhost || exit 1
+sudo nginx -t
+sudo systemctl reload nginx
 
-echo "✅ App Healthy"
+echo "🔄 Traffic switched to ${NEW_PORT}"
+'''
+            }
+        }
+
+        // ✅ Cleanup Old Version
+        stage('Cleanup Old Version') {
+            steps {
+                sh '''
+pm2 delete webapp-${CURRENT_PORT} || true
 '''
             }
         }
     }
 
     post {
-
         failure {
-            echo "❌ Deployment Failed → Rolling Back"
-
-            script {
-                sh '''
-#!/bin/bash
-set -e
-
-LAST_BACKUP=${BACKUP_DIR}/latest
-
-if [ ! -d "$LAST_BACKUP" ]; then
-    echo "⚠️ No backup found"
-    exit 0
-fi
-
-rm -rf ${PROJECT_DIR}/*
-cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
-
-cd ${BACKEND_DIR}
-npm install
-
-pm2 delete ${APP_NAME} || true
-pm2 start server.js --name ${APP_NAME}
-
-sleep 5
-
-echo "🔁 Verifying rollback..."
-
-if curl -f http://localhost:3000/health; then
-    echo "✅ Rollback success"
-else
-    echo "❌ Rollback failed"
-fi
-'''
-            }
-
-            // ✅ Mark build SUCCESS after rollback
-            script {
-                currentBuild.result = 'SUCCESS'
-            }
+            echo "❌ Deployment failed → keeping old version running (NO downtime)"
         }
 
         success {
-            echo "✅ Deployment successful"
+            echo "✅ Zero downtime deployment successful"
         }
 
         always {
