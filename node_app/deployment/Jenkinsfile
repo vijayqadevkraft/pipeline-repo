@@ -19,7 +19,7 @@ pipeline {
 
     stages {
 
-        // ✅ 1. Setup Directories (FIXED: removed pipefail)
+        // ✅ 1. Setup Directories
         stage('Setup & Validate Directories') {
             steps {
                 sh '''
@@ -39,14 +39,16 @@ echo "✅ Directory ready"
             }
         }
 
-        // ✅ 2. Backup (SAFE + ALWAYS CREATE LATEST)
+        // ✅ 2. Backup (UPDATED)
         stage('Backup Current Application') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
 
-TIMESTAMP=$(date +%Y%m%d%H%M%S)
+# 🔹 Simple timestamp
+TIMESTAMP=$(date +%H%M%S)
+
 BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
 
 mkdir -p $BACKUP_PATH
@@ -54,10 +56,15 @@ mkdir -p $BACKUP_PATH
 if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
     cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
 
-    # ⭐ important
+    # Update latest symlink
     ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
 
     echo "✅ Backup created: $BACKUP_PATH"
+
+    # 🔹 Keep only last 2 backups
+    cd ${BACKUP_DIR}
+    ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
+
 else
     echo "⚠️ No project found, skipping backup"
 fi
@@ -65,7 +72,7 @@ fi
             }
         }
 
-        // ✅ 3. Checkout
+        // ✅ 3. Checkout Code
         stage('Checkout Code') {
             steps {
                 sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
@@ -137,7 +144,7 @@ npm run build || echo "No build step"
             }
         }
 
-        // ✅ 8. Deploy
+        // ✅ 8. Deploy with PM2
         stage('Deploy with PM2') {
             steps {
                 sh '''
@@ -160,7 +167,7 @@ pm2 save
             }
         }
 
-        // ✅ 9. Nginx
+        // ✅ 9. Configure Nginx
         stage('Configure Nginx') {
             steps {
                 sh '''
@@ -208,7 +215,7 @@ exit 1
         }
     }
 
-    // ✅ 11. POST (FINAL FIXED ROLLBACK)
+    // ✅ 11. POST (Rollback)
     post {
 
         failure {
@@ -225,7 +232,7 @@ LAST_BACKUP=${BACKUP_DIR}/latest
 
 if [ ! -d "$LAST_BACKUP" ]; then
     echo "⚠️ No backup found, skipping rollback"
-    exit 0   # ✅ important (do not fail again)
+    exit 0
 fi
 
 echo "📦 Restoring from $LAST_BACKUP"
