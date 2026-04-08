@@ -19,23 +19,21 @@ pipeline {
 
     stages {
 
-        // ✅ 1. Setup
+        // ✅ Setup
         stage('Setup & Validate Directories') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
-
 [ -d "${BASE_DIR}" ] || sudo mkdir -p ${BASE_DIR}
 [ -d "${BACKUP_DIR}" ] || sudo mkdir -p ${BACKUP_DIR}
-
 sudo chown -R jenkins:jenkins ${BASE_DIR} ${BACKUP_DIR}
 sudo chmod -R 755 ${BASE_DIR} ${BACKUP_DIR}
 '''
             }
         }
 
-        // ✅ 2. Backup FIRST (CRITICAL)
+        // ✅ Backup FIRST
         stage('Backup Current Application') {
             steps {
                 sh '''
@@ -44,27 +42,21 @@ set -e
 
 TIMESTAMP=$(date +%H%M%S)
 BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
-
 mkdir -p $BACKUP_PATH
 
 if [ -d "${PROJECT_DIR}" ] && [ "$(ls -A ${PROJECT_DIR} 2>/dev/null)" ]; then
     cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
-
     ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
-
     echo "✅ Backup created: $BACKUP_PATH"
 
-    # keep only 2 backups
     cd ${BACKUP_DIR}
     ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
-else
-    echo "⚠️ No project to backup"
 fi
 '''
             }
         }
 
-        // ✅ 3. Checkout
+        // ✅ Checkout
         stage('Checkout Code') {
             steps {
                 sh '[ -d "${PROJECT_DIR}" ] || mkdir -p ${PROJECT_DIR}'
@@ -79,138 +71,78 @@ fi
             }
         }
 
-        // ✅ 4. Validate Backend
+        // ✅ Validate
         stage('Validate Backend') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
-
-[ -d "${BACKEND_DIR}" ] || { echo "❌ backend missing"; exit 1; }
-[ -f "${BACKEND_DIR}/server.js" ] || { echo "❌ server.js missing"; exit 1; }
-[ -f "${BACKEND_DIR}/package.json" ] || { echo "❌ package.json missing"; exit 1; }
-
-echo "✅ Backend valid"
+[ -f "${BACKEND_DIR}/server.js" ] || exit 1
+[ -f "${BACKEND_DIR}/package.json" ] || exit 1
 '''
             }
         }
 
-        // ✅ 5. Node Setup
-        stage('Setup Node') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
-
-if ! node -v | grep -q "v18"; then
-    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-fi
-
-sudo npm install -g npm@9
-'''
-            }
-        }
-
-        // ✅ 6. Install
+        // ✅ Install
         stage('Install Dependencies') {
             steps {
                 sh '''
-#!/bin/bash
-set -e
 cd ${BACKEND_DIR}
 npm install
 '''
             }
         }
 
-        // ✅ 7. Build
-        stage('Build Application') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
-cd ${BACKEND_DIR}
-npm run build || echo "No build step"
-'''
-            }
-        }
-
-        // ✅ 8. Deploy
+        // ✅ Deploy
         stage('Deploy with PM2') {
             steps {
                 sh '''
-#!/bin/bash
-set -e
 cd ${BACKEND_DIR}
 
 command -v pm2 >/dev/null || sudo npm install -g pm2
 
-if pm2 describe ${APP_NAME} >/dev/null 2>&1; then
-    pm2 reload ${APP_NAME}
-else
-    pm2 start server.js --name ${APP_NAME}
-fi
-
+pm2 delete ${APP_NAME} || true
+pm2 start server.js --name ${APP_NAME}
 pm2 save
+
+# wait for app to start
+sleep 5
 '''
             }
         }
 
-        // ✅ 9. Nginx
+        // ✅ Nginx
         stage('Configure Nginx') {
             steps {
                 sh '''
-#!/bin/bash
-sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
-server {
-    listen 80;
-    server_name _;
-
-    location / {
-        proxy_pass http://localhost:3000;
-    }
-
-    location /api {
-        proxy_pass http://localhost:3000;
-    }
-}
-EOF'
-
 sudo nginx -t
 sudo systemctl restart nginx
 '''
             }
         }
 
-        // ✅ 10. FULL E2E VALIDATION
+        // ✅ FULL E2E CHECK
         stage('End-to-End Health Check') {
             steps {
                 sh '''
 #!/bin/bash
 set -e
 
-echo "🔍 Running FULL E2E checks..."
+echo "🔍 Running E2E checks..."
 
-# PM2 running
-pm2 list | grep ${APP_NAME} || { echo "❌ PM2 not running"; exit 1; }
+pm2 list | grep ${APP_NAME} || exit 1
 
-# Port check
-netstat -tulnp | grep 3000 || { echo "❌ Port 3000 not listening"; exit 1; }
+ss -tuln | grep 3000 || {
+    echo "❌ Port 3000 not listening"
+    exit 1
+}
 
-# Backend
-curl -f http://localhost:3000/health || { echo "❌ Backend failed"; exit 1; }
+curl -f http://localhost:3000/health || exit 1
+curl -f http://localhost:3000/api || exit 1
+curl -s http://localhost:3000 | grep "html" || exit 1
+curl -f http://localhost || exit 1
 
-# API
-curl -f http://localhost:3000/api || { echo "❌ API failed"; exit 1; }
-
-# Frontend HTML
-curl -s http://localhost:3000 | grep "html" || { echo "❌ Frontend failed"; exit 1; }
-
-# Nginx
-curl -f http://localhost || { echo "❌ Nginx failed"; exit 1; }
-
-echo "✅ FULL APPLICATION HEALTHY"
+echo "✅ App Healthy"
 '''
             }
         }
@@ -228,7 +160,7 @@ set -e
 LAST_BACKUP=${BACKUP_DIR}/latest
 
 if [ ! -d "$LAST_BACKUP" ]; then
-    echo "⚠️ No backup found"
+    echo "No backup found"
     exit 0
 fi
 
@@ -238,21 +170,20 @@ cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
 cd ${BACKEND_DIR}
 npm install
 
-pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
+pm2 delete ${APP_NAME} || true
+pm2 start server.js --name ${APP_NAME}
 
-echo "🔁 Verifying rollback..."
+sleep 5
 
-curl -f http://localhost:3000/health && echo "✅ Rollback success" || echo "❌ Rollback failed"
+echo "🔁 Verify rollback..."
+
+curl -f http://localhost:3000/health && echo "✅ Rollback success" || exit 1
 '''
             }
         }
 
         success {
             echo "✅ Deployment successful"
-        }
-
-        always {
-            echo "📋 Pipeline finished"
         }
     }
 }
