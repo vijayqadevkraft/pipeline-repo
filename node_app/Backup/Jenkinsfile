@@ -1,0 +1,35 @@
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_DIR = "/opt/projects/webapplication-repo"
+        BACKUP_DIR  = "/opt/backups/webapplication-repo"
+    }
+
+    stages {
+        stage('Create Backup') {
+            steps {
+                sh '''
+#!/bin/bash
+set -e
+
+TIMESTAMP=$(date +%H%M%S)
+BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
+
+mkdir -p $BACKUP_PATH
+
+if [ -d "${PROJECT_DIR}" ]; then
+    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
+    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
+fi
+
+# Keep only 2 backups
+cd ${BACKUP_DIR}
+ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
+
+echo "✅ Backup created at $BACKUP_PATH"
+'''
+            }
+        }
+    }
+}
