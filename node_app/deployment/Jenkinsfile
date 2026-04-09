@@ -17,122 +17,190 @@ pipeline {
 
     stages {
 
-        // ✅ Stage 1: Setup Directory
-        stage('Setup Directory') {
+        stage('Setup Permissions') {
             steps {
-                sh '''
-                mkdir -p ${BASE_DIR}
-                '''
+                script {
+                    echo "🔐 Setting up directory permissions..."
+
+                    sh '''
+                        set -e
+                        sudo mkdir -p ${BASE_DIR}
+                        sudo chown -R jenkins:jenkins ${BASE_DIR}
+                        sudo chmod -R 755 ${BASE_DIR}
+                    '''
+                }
             }
         }
 
-        // ✅ Stage 2: Checkout Code
         stage('Checkout Code') {
             steps {
-                sh '''
-                if [ -d "${PROJECT_DIR}/.git" ]; then
-                    echo "🔄 Updating repo..."
-                    cd ${PROJECT_DIR}
-                    git fetch origin
-                    git reset --hard origin/${BRANCH}
-                else
-                    echo "📥 Cloning repo..."
-                    rm -rf ${PROJECT_DIR}
-                    git clone ${REPO_URL} ${PROJECT_DIR}
-                fi
-                '''
+                script {
+                    echo "📥 Cloning repository..."
+
+                    sh "mkdir -p ${PROJECT_DIR}"
+
+                    dir("${PROJECT_DIR}") {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${BRANCH}"]],
+                            userRemoteConfigs: [[url: "${REPO_URL}"]]
+                        ])
+                    }
+                }
             }
         }
 
-        // ✅ Stage 3: Install Dependencies
+        stage('Setup Node Environment') {
+            steps {
+                script {
+                    echo "🔧 Ensuring Node.js 18 + npm 9..."
+
+                    sh '''
+                        set -e
+
+                        if ! node -v | grep -q "v18"; then
+                            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+                            sudo apt-get install -y nodejs
+                        fi
+
+                        CURRENT_NPM=$(npm -v | cut -d '.' -f1)
+                        if [ "$CURRENT_NPM" -ne "9" ]; then
+                            sudo npm install -g npm@9
+                        fi
+
+                        node -v
+                        npm -v
+                    '''
+                }
+            }
+        }
+
         stage('Install Dependencies') {
             steps {
-                sh '''
-                cd ${BACKEND_DIR}
-                npm install
-                '''
-            }
-        }
+                script {
+                    echo "📦 Installing dependencies..."
 
-        // ✅ Stage 4: Deploy Application (ZERO DOWNTIME)
-        stage('Deploy Application') {
-            steps {
-                sh '''
-                cd ${BACKEND_DIR}
+                    sh '''
+                        set -e
+                        cd ${BACKEND_DIR}
 
-                echo "🚀 Deploying application..."
+                        export NODE_OPTIONS=--dns-result-order=ipv4first
 
-                # Ensure PM2 is installed
-                command -v pm2 >/dev/null || npm install -g pm2
+                        npm config set registry https://registry.npmjs.org/
+                        npm config set strict-ssl true
 
-                # ✅ Zero-downtime deploy:
-                #    First run  → pm2 reload fails → pm2 start (fresh start)
-                #    Next runs  → pm2 reload succeeds (no downtime, no 502)
-                pm2 reload ${APP_NAME} --update-env || pm2 start server.js --name ${APP_NAME}
-
-                sleep 3
-
-                # Verify app is running
-                pm2 list | grep ${APP_NAME} || {
-                    echo "❌ App failed to start"
-                    exit 1
+                        if [ -f package-lock.json ]; then
+                            npm ci
+                        else
+                            npm install
+                        fi
+                    '''
                 }
-
-                # Save PM2 process list
-                pm2 save
-
-                echo "✅ App deployed successfully"
-                '''
             }
         }
 
-        // ✅ Stage 5: Restart Nginx
-        stage('Restart Nginx') {
+        stage('Build Application') {
             steps {
-                sh '''
-                sudo nginx -t
-                sudo systemctl restart nginx
-                '''
+                script {
+                    echo "🏗️ Building application..."
+
+                    sh '''
+                        set -e
+                        cd ${BACKEND_DIR}
+                        npm run build || echo "⚠️ No build step"
+                    '''
+                }
             }
         }
 
-        // ✅ Stage 6: Health Check
+        stage('Deploy with PM2') {
+            steps {
+                script {
+                    echo "🚀 Deploying app..."
+
+                    sh '''
+                        set -e
+                        cd ${BACKEND_DIR}
+
+                        if ! command -v pm2 > /dev/null; then
+                            sudo npm install -g pm2
+                        fi
+
+                        pm2 delete ${APP_NAME} || true
+                        pm2 start server.js --name ${APP_NAME}
+
+                        pm2 save
+
+                        pm2 startup systemd -u jenkins --hp /var/lib/jenkins || true
+
+                        pm2 status
+                    '''
+                }
+            }
+        }
+
+        stage('Configure Nginx') {
+            steps {
+                script {
+                    echo "🌐 Configuring Nginx..."
+
+                    sh '''
+                        sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \\$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \\$host;
+        proxy_cache_bypass \\$http_upgrade;
+    }
+}
+EOF'
+
+                        sudo nginx -t
+                        sudo systemctl restart nginx
+                    '''
+                }
+            }
+        }
+
         stage('Health Check') {
             steps {
-                sh '''
-                echo "🔍 Running health check..."
+                script {
+                    echo "🩺 Running health check..."
 
-                for i in {1..5}; do
-                    if curl -sf http://localhost:3000/health; then
-                        echo "✅ Backend OK"
-                        break
-                    fi
-                    echo "⏳ Attempt $i failed, retrying in 5s..."
-                    sleep 5
-                done
+                    sh '''
+                        for i in {1..5}; do
+                            if curl -f http://localhost:3000/api; then
+                                echo "✅ App is healthy"
+                                exit 0
+                            fi
+                            echo "Retrying in 5 seconds..."
+                            sleep 5
+                        done
 
-                curl -f http://localhost || {
-                    echo "❌ Nginx check failed"
-                    exit 1
+                        echo "❌ App failed health check"
+                        exit 1
+                    '''
                 }
-
-                echo "✅ Deployment verified"
-                '''
             }
         }
-
     }
 
     post {
         success {
-            echo "✅ Deployment Successful 🚀"
+            echo "✅ Deployment completed successfully!"
         }
         failure {
-            echo "❌ Deployment Failed"
-            sh 'pm2 logs ${APP_NAME} --lines 20 --nostream || true'
+            echo "❌ Deployment failed. Check logs."
         }
         always {
-            echo "📋 Pipeline Finished"
+            echo "📋 Pipeline finished."
         }
     }
 }
+
