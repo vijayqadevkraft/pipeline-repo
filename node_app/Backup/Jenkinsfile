@@ -1,45 +1,40 @@
-stage('Backup Application') {
-    steps {
-        script {
-            echo "📦 Taking full app backup..."
+pipeline {
+    agent any
 
-            sh '''
-                set -e
+    stages {
 
-                PROJECT_NAME="webapplication-repo"
-                BASE_DIR="/opt/projects"
-                BACKUP_BASE="/opt/backups"
+        stage('Backup Application') {
+            steps {
+                script {
+                    echo "📦 Taking full app backup..."
 
-                PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
-                BACKUP_DIR="${BACKUP_BASE}/${PROJECT_NAME}"
+                    sh '''
+                        set -e
 
-                # Check project exists
-                if [ ! -d "$PROJECT_DIR" ]; then
-                    echo "❌ Project directory not found: $PROJECT_DIR"
-                    exit 1
-                fi
+                        PROJECT_NAME="webapplication-repo"
+                        BASE_DIR="/opt/projects"
+                        BACKUP_BASE="/opt/backups"
 
-                echo "🧹 Removing old backup (if exists)..."
-                if [ -d "$BACKUP_DIR" ]; then
-                    sudo rm -rf "$BACKUP_DIR"
-                fi
+                        PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
+                        BACKUP_DIR="${BACKUP_BASE}/${PROJECT_NAME}"
 
-                echo "📁 Creating backup directory..."
-                sudo mkdir -p "$BACKUP_DIR"
+                        if [ ! -d "$PROJECT_DIR" ]; then
+                            echo "❌ Project directory not found"
+                            exit 1
+                        fi
 
-                echo "📦 Copying full project using rsync..."
-                sudo rsync -a "$PROJECT_DIR"/ "$BACKUP_DIR"/
+                        if [ -d "$BACKUP_DIR" ]; then
+                            sudo rm -rf "$BACKUP_DIR"
+                        fi
 
-                echo "📄 Creating manifest..."
-                sudo find "$BACKUP_DIR" -type f > "$BACKUP_DIR/manifest.txt"
+                        sudo mkdir -p "$BACKUP_DIR"
+                        sudo rsync -a "$PROJECT_DIR"/ "$BACKUP_DIR"/
 
-                echo "📊 Backup size:"
-                sudo du -sh "$BACKUP_DIR"
-
-                echo "📂 Backup location: $BACKUP_DIR"
-
-                echo "✅ Backup completed successfully"
-            '''
+                        echo "✅ Backup completed"
+                    '''
+                }
+            }
         }
+
     }
 }
