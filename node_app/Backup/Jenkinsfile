@@ -1,35 +1,41 @@
-pipeline {
-    agent any
+stage('Backup Application') {
+    steps {
+        script {
+            echo "📦 Taking full app backup (simple copy)..."
 
-    environment {
-        PROJECT_DIR = "/opt/projects/webapplication-repo"
-        BACKUP_DIR  = "/opt/backups/webapplication-repo"
-    }
+            sh '''
+                set -e
 
-    stages {
-        stage('Create Backup') {
-            steps {
-                sh '''
-#!/bin/bash
-set -e
+                PROJECT_NAME="webapplication-repo"
+                BASE_DIR="/opt/projects"
+                BACKUP_BASE="/opt/backups"
 
-TIMESTAMP=$(date +%H%M%S)
-BACKUP_PATH=${BACKUP_DIR}/$TIMESTAMP
+                PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
+                BACKUP_DIR="${BACKUP_BASE}/${PROJECT_NAME}"
 
-mkdir -p $BACKUP_PATH
+                # Check project exists
+                if [ ! -d "$PROJECT_DIR" ]; then
+                    echo "❌ Project directory not found: $PROJECT_DIR"
+                    exit 1
+                fi
 
-if [ -d "${PROJECT_DIR}" ]; then
-    cp -r ${PROJECT_DIR}/* $BACKUP_PATH/
-    ln -sfn $BACKUP_PATH ${BACKUP_DIR}/latest
-fi
+                echo "🧹 Cleaning old backup..."
+                sudo rm -rf "$BACKUP_DIR"
 
-# Keep only 2 backups
-cd ${BACKUP_DIR}
-ls -dt */ | grep -v latest | tail -n +3 | xargs rm -rf || true
+                echo "📁 Creating backup directory..."
+                sudo mkdir -p "$BACKUP_DIR"
 
-echo "✅ Backup created at $BACKUP_PATH"
-'''
-            }
+                echo "📦 Copying full project..."
+                sudo rsync -a "$PROJECT_DIR"/ "$BACKUP_DIR"/
+
+                echo "📄 Creating manifest..."
+                sudo find "$BACKUP_DIR" -type f > "$BACKUP_DIR/manifest.txt"
+
+                echo "📊 Backup size:"
+                sudo du -sh "$BACKUP_DIR"
+
+                echo "✅ Backup completed successfully at: $BACKUP_DIR"
+            '''
         }
     }
 }
