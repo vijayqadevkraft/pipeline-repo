@@ -3,128 +3,68 @@ pipeline {
 
     environment {
         PROJECT_NAME = "webapplication-repo"
-        PROJECT_DIR  = "/opt/projects/${PROJECT_NAME}"
-        BACKUP_DIR   = "/opt/backups/${PROJECT_NAME}"
-        TIMESTAMP    = "${new Date().format('yyyyMMdd_HHmmss')}"
-        APP_NAME     = "webapp"
+        BASE_DIR     = "/opt/projects"
+        BACKUP_BASE  = "/opt/backups"
     }
 
     stages {
 
-        stage('Pre-Deployment Backup') {
+        stage('Rollback Application') {
             steps {
                 script {
-                    echo "📦 Creating backup before deployment..."
+                    echo "🔄 Starting rollback..."
 
-                    sh """
-                    mkdir -p ${BACKUP_DIR}/${TIMESTAMP}
+                    sh '''
+                        set -e
 
-                    if [ -d "${PROJECT_DIR}" ]; then
-                        cp -r ${PROJECT_DIR}/* ${BACKUP_DIR}/${TIMESTAMP}/
-                        echo "✅ Backup created at ${BACKUP_DIR}/${TIMESTAMP}"
-                    else
-                        echo "⚠️ Project directory not found!"
-                    fi
-                    """
+                        PROJECT_NAME="webapplication-repo"
+                        BASE_DIR="/opt/projects"
+                        BACKUP_BASE="/opt/backups"
+
+                        PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
+                        BACKUP_DIR="${BACKUP_BASE}/${PROJECT_NAME}"
+
+                        echo "🛑 Stopping application..."
+                        sudo -u ubuntu pm2 delete webapp || true
+
+                        if [ ! -d "$BACKUP_DIR" ]; then
+                            echo "❌ No backup found. Cannot rollback."
+                            exit 1
+                        fi
+
+                        echo "📁 Restoring backup..."
+
+                        sudo rm -rf "$PROJECT_DIR"
+                        sudo mkdir -p "$PROJECT_DIR"
+
+                        sudo rsync -a "$BACKUP_DIR"/ "$PROJECT_DIR"/
+
+                        echo "📦 Installing dependencies..."
+                        cd "$PROJECT_DIR/backend"
+                        npm install || echo "⚠️ npm install skipped"
+
+                        echo "🚀 Restarting application..."
+                        sudo -u ubuntu pm2 reload webapp || sudo -u ubuntu pm2 start server.js --name webapp
+
+                        sudo -u ubuntu pm2 save
+
+                        echo "🔁 Restarting Nginx..."
+                        sudo systemctl restart nginx
+
+                        echo "✅ Rollback completed successfully"
+                    '''
                 }
             }
         }
 
-        stage('Pull Latest Code') {
-            steps {
-                dir("${PROJECT_DIR}") {
-                    sh "git pull origin main"
-                }
-            }
-        }
-
-        stage('Install Dependencies') {
-            steps {
-                dir("${PROJECT_DIR}") {
-                    sh "npm install"
-                }
-            }
-        }
-
-        stage('Build Application') {
-            steps {
-                dir("${PROJECT_DIR}") {
-                    sh "npm run build"
-                }
-            }
-        }
-
-        stage('Restart Application') {
-            steps {
-                script {
-                    sh """
-                    pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
-                    """
-                }
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                script {
-                    echo "🔍 Performing health check..."
-
-                    sh """
-                    sleep 5
-                    curl -f http://localhost:3000 || exit 1
-                    """
-                }
-            }
-        }
     }
 
     post {
-
         success {
-            echo "✅ Deployment successful!"
+            echo "✅ Rollback finished successfully!"
         }
-
         failure {
-            echo "❌ Deployment failed! Starting rollback..."
-
-            script {
-
-                sh """
-                echo "🛑 Stopping current app..."
-                pm2 stop ${APP_NAME} || true
-
-                echo "🔄 Restoring from backup..."
-
-                LATEST_BACKUP=\$(ls -td ${BACKUP_DIR}/* | head -1)
-
-                if [ -z "\$LATEST_BACKUP" ]; then
-                    echo "❌ No backup found!"
-                    exit 1
-                fi
-
-                echo "📂 Restoring from \$LATEST_BACKUP"
-
-                rm -rf ${PROJECT_DIR}/*
-                cp -r \$LATEST_BACKUP/* ${PROJECT_DIR}/
-
-                echo "📦 Reinstalling dependencies..."
-                cd ${PROJECT_DIR}
-                npm install
-
-                echo "🚀 Restarting application..."
-                pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
-
-                echo "🔍 Verifying rollback..."
-                sleep 5
-                curl -f http://localhost:3000
-
-                echo "✅ Rollback completed successfully!"
-                """
-            }
-        }
-
-        always {
-            echo "📜 Pipeline execution completed."
+            echo "❌ Rollback failed!"
         }
     }
 }
