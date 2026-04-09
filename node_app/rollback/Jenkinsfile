@@ -2,42 +2,129 @@ pipeline {
     agent any
 
     environment {
-        PROJECT_DIR = "/opt/projects/webapplication-repo"
-        BACKUP_DIR  = "/opt/backups/webapplication-repo"
-        BACKEND_DIR = "${PROJECT_DIR}/backend"
-        APP_NAME    = "webapp"
+        PROJECT_NAME = "webapplication-repo"
+        PROJECT_DIR  = "/opt/projects/${PROJECT_NAME}"
+        BACKUP_DIR   = "/opt/backups/${PROJECT_NAME}"
+        TIMESTAMP    = "${new Date().format('yyyyMMdd_HHmmss')}"
+        APP_NAME     = "webapp"
     }
 
     stages {
-        stage('Rollback to Last Backup') {
+
+        stage('Pre-Deployment Backup') {
             steps {
-                sh '''
-#!/bin/bash
-set -e
+                script {
+                    echo "📦 Creating backup before deployment..."
 
-LAST_BACKUP=${BACKUP_DIR}/latest
+                    sh """
+                    mkdir -p ${BACKUP_DIR}/${TIMESTAMP}
 
-if [ ! -d "$LAST_BACKUP" ]; then
-    echo "❌ No backup found"
-    exit 1
-fi
-
-rm -rf ${PROJECT_DIR}/*
-cp -r $LAST_BACKUP/* ${PROJECT_DIR}/
-
-cd ${BACKEND_DIR}
-npm install
-
-pm2 delete ${APP_NAME} || true
-pm2 start server.js --name ${APP_NAME}
-
-sleep 5
-
-curl -f http://localhost:3000/health
-
-echo "✅ Rollback successful"
-'''
+                    if [ -d "${PROJECT_DIR}" ]; then
+                        cp -r ${PROJECT_DIR}/* ${BACKUP_DIR}/${TIMESTAMP}/
+                        echo "✅ Backup created at ${BACKUP_DIR}/${TIMESTAMP}"
+                    else
+                        echo "⚠️ Project directory not found!"
+                    fi
+                    """
+                }
             }
+        }
+
+        stage('Pull Latest Code') {
+            steps {
+                dir("${PROJECT_DIR}") {
+                    sh "git pull origin main"
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                dir("${PROJECT_DIR}") {
+                    sh "npm install"
+                }
+            }
+        }
+
+        stage('Build Application') {
+            steps {
+                dir("${PROJECT_DIR}") {
+                    sh "npm run build"
+                }
+            }
+        }
+
+        stage('Restart Application') {
+            steps {
+                script {
+                    sh """
+                    pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    echo "🔍 Performing health check..."
+
+                    sh """
+                    sleep 5
+                    curl -f http://localhost:3000 || exit 1
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo "✅ Deployment successful!"
+        }
+
+        failure {
+            echo "❌ Deployment failed! Starting rollback..."
+
+            script {
+
+                sh """
+                echo "🛑 Stopping current app..."
+                pm2 stop ${APP_NAME} || true
+
+                echo "🔄 Restoring from backup..."
+
+                LATEST_BACKUP=\$(ls -td ${BACKUP_DIR}/* | head -1)
+
+                if [ -z "\$LATEST_BACKUP" ]; then
+                    echo "❌ No backup found!"
+                    exit 1
+                fi
+
+                echo "📂 Restoring from \$LATEST_BACKUP"
+
+                rm -rf ${PROJECT_DIR}/*
+                cp -r \$LATEST_BACKUP/* ${PROJECT_DIR}/
+
+                echo "📦 Reinstalling dependencies..."
+                cd ${PROJECT_DIR}
+                npm install
+
+                echo "🚀 Restarting application..."
+                pm2 reload ${APP_NAME} || pm2 start server.js --name ${APP_NAME}
+
+                echo "🔍 Verifying rollback..."
+                sleep 5
+                curl -f http://localhost:3000
+
+                echo "✅ Rollback completed successfully!"
+                """
+            }
+        }
+
+        always {
+            echo "📜 Pipeline execution completed."
         }
     }
 }
