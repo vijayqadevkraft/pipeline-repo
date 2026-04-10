@@ -62,7 +62,7 @@ pipeline {
         stage('Deploy with PM2 (Ubuntu User)') {
             steps {
                 script {
-                    echo "🚀 Deploying app..."
+                    echo "🚀 Deploying app as ubuntu user..."
 
                     sh '''
                         cd ${PROJECT_DIR}/backend
@@ -72,14 +72,11 @@ pipeline {
                             sudo npm install -g pm2
                         fi
 
-                        # ✅ Clean restart (fix)
-                        sudo -u ubuntu pm2 delete webapp || true
-                        sudo -u ubuntu pm2 start server.js --name webapp
-                        sudo -u ubuntu pm2 save
+                        # Restart if exists, else start
+                        sudo -u ubuntu pm2 restart webapp || sudo -u ubuntu pm2 start server.js --name webapp
 
-                        # Debug
-                        sudo -u ubuntu pm2 list
-                        sleep 5
+                        # Save PM2 config
+                        sudo -u ubuntu pm2 save
                     '''
                 }
             }
@@ -117,15 +114,18 @@ EOF'
             steps {
                 script {
                     echo "🩺 Running health check..."
+
                     sh '''
                         sleep 5
+
+                        echo "🔍 Health Check:"
                         curl -f http://localhost:3000/health
 
-                        echo "📊 Port check:"
+                        echo "📡 Port Check:"
                         netstat -tulnp | grep 3000 || echo "⚠️ Port not running"
 
-                        echo "📜 PM2 Logs:"
-                        sudo -u ubuntu pm2 logs webapp --lines 20
+                        echo "📜 PM2 Logs (last 20 lines):"
+                        sudo -u ubuntu pm2 logs webapp --lines 20 --nostream || true
                     '''
                 }
             }
