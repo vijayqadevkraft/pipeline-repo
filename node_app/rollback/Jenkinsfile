@@ -22,36 +22,58 @@ pipeline {
                         BACKUP_BASE="/opt/backups"
 
                         PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
-                        BACKUP_DIR="${BACKUP_BASE}/${PROJECT_NAME}"
+                        BACKUP_PARENT="${BACKUP_BASE}/${PROJECT_NAME}"
 
                         echo "🛑 Stopping application..."
                         sudo -u ubuntu pm2 delete webapp || true
 
-                        if [ ! -d "$BACKUP_DIR" ]; then
+                        echo "📂 Finding latest backup..."
+
+                        LATEST_BACKUP=$(ls -td ${BACKUP_PARENT}/* | head -1)
+
+                        if [ -z "$LATEST_BACKUP" ]; then
                             echo "❌ No backup found. Cannot rollback."
                             exit 1
                         fi
 
-                        echo "📁 Restoring backup..."
+                        echo "📁 Restoring backup: $LATEST_BACKUP"
 
                         sudo rm -rf "$PROJECT_DIR"
                         sudo mkdir -p "$PROJECT_DIR"
 
-                        sudo rsync -a "$BACKUP_DIR"/ "$PROJECT_DIR"/
+                        sudo rsync -a "$LATEST_BACKUP"/ "$PROJECT_DIR"/
 
                         echo "📦 Installing dependencies..."
                         cd "$PROJECT_DIR/backend"
                         npm install || echo "⚠️ npm install skipped"
 
-                        echo "🚀 Restarting application..."
-                        sudo -u ubuntu pm2 reload webapp || sudo -u ubuntu pm2 start server.js --name webapp
+                        echo "🚀 Starting application..."
 
+                        sudo -u ubuntu pm2 delete webapp || true
+                        sudo -u ubuntu pm2 start server.js --name webapp
                         sudo -u ubuntu pm2 save
 
-                        echo "🔁 Restarting Nginx..."
+                        echo "🔍 Checking running process..."
+                        sudo -u ubuntu pm2 list
+
+                        echo "🌐 Restarting Nginx..."
                         sudo systemctl restart nginx
 
-                        echo "✅ Rollback completed successfully"
+                        echo "🩺 Performing health check..."
+                        sleep 5
+
+                        if curl -f http://localhost:3000; then
+                            echo "✅ Application is running after rollback"
+                        else
+                            echo "❌ Application still not working after rollback"
+                            exit 1
+                        fi
+
+                        echo "📊 Checking port..."
+                        netstat -tulnp | grep 3000 || echo "⚠️ Port 3000 not active"
+
+                        echo "📜 Last logs:"
+                        sudo -u ubuntu pm2 logs webapp --lines 20
                     '''
                 }
             }
