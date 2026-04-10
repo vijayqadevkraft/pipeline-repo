@@ -17,10 +17,6 @@ pipeline {
                     sh '''
                         set -e
 
-                        PROJECT_NAME="webapplication-repo"
-                        BASE_DIR="/opt/projects"
-                        BACKUP_BASE="/opt/backups"
-
                         PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
                         BACKUP_PARENT="${BACKUP_BASE}/${PROJECT_NAME}"
 
@@ -29,22 +25,22 @@ pipeline {
 
                         echo "📂 Finding latest backup..."
 
-                        LATEST_BACKUP=$(ls -td ${BACKUP_PARENT}/* | head -1)
+                        LATEST_BACKUP=$(ls -td ${BACKUP_PARENT}/backup_* 2>/dev/null | head -1)
 
                         if [ -z "$LATEST_BACKUP" ]; then
                             echo "❌ No backup found. Cannot rollback."
                             exit 1
                         fi
 
-                        echo "📁 Restoring backup: $LATEST_BACKUP"
+                        echo "📁 Restoring from: $LATEST_BACKUP"
 
+                        # Restore project
                         sudo rm -rf "$PROJECT_DIR"
                         sudo mkdir -p "$PROJECT_DIR"
-
                         sudo rsync -a "$LATEST_BACKUP"/ "$PROJECT_DIR"/
 
                         echo "📦 Installing dependencies..."
-                        cd "$PROJECT_DIR/backend"
+                        cd "$PROJECT_DIR"
                         npm install || echo "⚠️ npm install skipped"
 
                         echo "🚀 Starting application..."
@@ -53,24 +49,24 @@ pipeline {
                         sudo -u ubuntu pm2 start server.js --name webapp
                         sudo -u ubuntu pm2 save
 
-                        echo "🔍 Checking running process..."
+                        echo "🔍 PM2 Status:"
                         sudo -u ubuntu pm2 list
 
                         echo "🌐 Restarting Nginx..."
                         sudo systemctl restart nginx
 
-                        echo "🩺 Performing health check..."
+                        echo "🩺 Health Check after rollback..."
                         sleep 5
 
-                        if curl -f http://localhost:3000; then
-                            echo "✅ Application is running after rollback"
+                        if curl -f http://localhost:3000/health; then
+                            echo "✅ Rollback successful and app is running"
                         else
-                            echo "❌ Application still not working after rollback"
+                            echo "❌ Rollback failed - app not responding"
                             exit 1
                         fi
 
-                        echo "📊 Checking port..."
-                        netstat -tulnp | grep 3000 || echo "⚠️ Port 3000 not active"
+                        echo "📊 Port Check:"
+                        netstat -tulnp | grep 3000 || echo "⚠️ Port not active"
 
                         echo "📜 Last logs:"
                         sudo -u ubuntu pm2 logs webapp --lines 20
@@ -83,10 +79,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Rollback finished successfully!"
+            echo "✅ Rollback pipeline successful!"
         }
         failure {
-            echo "❌ Rollback failed!"
+            echo "❌ Rollback pipeline failed!"
         }
     }
 }
