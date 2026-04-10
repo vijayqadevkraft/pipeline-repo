@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        PROJECT_NAME = "simpleweb"
+        PROJECT_NAME = "simpleweb_v2"   // 👈 your new folder
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
         NGINX_DIR    = "/var/www/html"
@@ -21,23 +21,27 @@ pipeline {
             }
         }
 
-        stage('Clone / Pull Code') {
+        stage('Clean Old Code') {
             steps {
-                echo "📥 Fetching latest code..."
+                echo "🧹 Cleaning project directory..."
                 sh '''
-                    if [ -d "$PROJECT_DIR/.git" ]; then
-                        cd $PROJECT_DIR
-                        git pull origin main || exit 1
-                    else
-                        git clone $REPO_URL $PROJECT_DIR || exit 1
-                    fi
+                    rm -rf $PROJECT_DIR
+                '''
+            }
+        }
+
+        stage('Clone Fresh Code') {
+            steps {
+                echo "📥 Cloning latest code..."
+                sh '''
+                    git clone $REPO_URL $PROJECT_DIR
                 '''
             }
         }
 
         stage('Validate File') {
             steps {
-                echo "🔍 Validating index.html..."
+                echo "🔍 Checking index.html..."
                 sh '''
                     if [ ! -f "$PROJECT_DIR/index.html" ]; then
                         echo "❌ index.html not found!"
