@@ -13,21 +13,35 @@ pipeline {
 
         stage('Setup Permissions') {
             steps {
+                echo "🔐 Setting up directories..."
                 sh '''
-                    sudo mkdir -p /opt/projects
-                    sudo chown -R jenkins:jenkins /opt/projects
+                    sudo mkdir -p $BASE_DIR
+                    sudo chown -R jenkins:jenkins $BASE_DIR
                 '''
             }
         }
 
         stage('Clone / Pull Code') {
             steps {
+                echo "📥 Fetching latest code..."
                 sh '''
                     if [ -d "$PROJECT_DIR/.git" ]; then
                         cd $PROJECT_DIR
-                        git pull origin main
+                        git pull origin main || exit 1
                     else
-                        git clone $REPO_URL $PROJECT_DIR
+                        git clone $REPO_URL $PROJECT_DIR || exit 1
+                    fi
+                '''
+            }
+        }
+
+        stage('Validate File') {
+            steps {
+                echo "🔍 Validating index.html..."
+                sh '''
+                    if [ ! -f "$PROJECT_DIR/index.html" ]; then
+                        echo "❌ index.html not found!"
+                        exit 1
                     fi
                 '''
             }
@@ -35,16 +49,27 @@ pipeline {
 
         stage('Deploy to Nginx') {
             steps {
+                echo "🚀 Deploying to Nginx..."
                 sh '''
                     sudo cp $PROJECT_DIR/index.html $NGINX_DIR/
                 '''
             }
         }
 
-        stage('Restart Nginx') {
+        stage('Reload Nginx') {
             steps {
+                echo "🔄 Reloading Nginx..."
                 sh '''
-                    sudo systemctl restart nginx
+                    sudo systemctl reload nginx
+                '''
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                echo "✅ Verifying deployment..."
+                sh '''
+                    curl -I http://localhost
                 '''
             }
         }
@@ -52,10 +77,10 @@ pipeline {
 
     post {
         success {
-            echo "Deployment Successful 🎉"
+            echo "🎉 Deployment Successful!"
         }
         failure {
-            echo "Deployment Failed ❌"
+            echo "❌ Deployment Failed!"
         }
     }
 }
