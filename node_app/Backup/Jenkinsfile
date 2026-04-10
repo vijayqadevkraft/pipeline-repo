@@ -29,7 +29,12 @@ pipeline {
                         fi
 
                         # =========================
-                        # 2. Create timestamp backup
+                        # 2. Ensure backup parent exists
+                        # =========================
+                        sudo mkdir -p "$BACKUP_PARENT"
+
+                        # =========================
+                        # 3. Create timestamp backup
                         # =========================
                         TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
                         BACKUP_DIR="${BACKUP_PARENT}/backup_$TIMESTAMP"
@@ -42,7 +47,7 @@ pipeline {
                         sudo rsync -a "$PROJECT_DIR"/ "$BACKUP_DIR"/
 
                         # =========================
-                        # 3. VALIDATION START
+                        # 4. VALIDATION START
                         # =========================
                         echo "🔍 Validating backup..."
 
@@ -59,7 +64,7 @@ pipeline {
                         fi
 
                         # =========================
-                        # 4. BACKEND VALIDATION (ROOT)
+                        # 5. BACKEND VALIDATION (ROOT)
                         # =========================
                         echo "🔧 Checking backend..."
 
@@ -76,7 +81,7 @@ pipeline {
                         echo "✅ Backend validation passed"
 
                         # =========================
-                        # 5. FRONTEND VALIDATION
+                        # 6. FRONTEND VALIDATION
                         # =========================
                         echo "🎨 Checking frontend..."
 
@@ -94,7 +99,7 @@ pipeline {
                         fi
 
                         # =========================
-                        # 6. FILE COUNT CHECK
+                        # 7. FILE COUNT CHECK
                         # =========================
                         SRC_COUNT=$(find "$PROJECT_DIR" | wc -l)
                         DEST_COUNT=$(find "$BACKUP_DIR" | wc -l)
@@ -108,15 +113,15 @@ pipeline {
                         fi
 
                         # =========================
-                        # 7. CLEAN OLD BACKUPS
+                        # 8. CLEAN OLD BACKUPS (SAFE)
                         # =========================
                         echo "🧹 Keeping last 5 backups..."
 
                         cd "$BACKUP_PARENT"
-                        ls -dt backup_* | tail -n +6 | xargs -r rm -rf
+                        ls -dt backup_* 2>/dev/null | tail -n +6 | xargs -r rm -rf
 
                         echo "📂 Available backups:"
-                        ls -dt backup_*
+                        ls -dt backup_* 2>/dev/null || echo "No backups yet"
 
                         echo "✅ Backup completed and validated successfully"
                     '''
