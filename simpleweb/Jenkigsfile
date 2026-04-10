@@ -1,1 +1,61 @@
+pipeline {
+    agent any
 
+    environment {
+        PROJECT_NAME = "simpleweb"
+        BASE_DIR     = "/opt/projects"
+        PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
+        NGINX_DIR    = "/var/www/html"
+        REPO_URL     = "https://github.com/vjtech98157/simpleweb.git"
+    }
+
+    stages {
+
+        stage('Setup Permissions') {
+            steps {
+                sh '''
+                    sudo mkdir -p /opt/projects
+                    sudo chown -R jenkins:jenkins /opt/projects
+                '''
+            }
+        }
+
+        stage('Clone / Pull Code') {
+            steps {
+                sh '''
+                    if [ -d "$PROJECT_DIR/.git" ]; then
+                        cd $PROJECT_DIR
+                        git pull origin main
+                    else
+                        git clone $REPO_URL $PROJECT_DIR
+                    fi
+                '''
+            }
+        }
+
+        stage('Deploy to Nginx') {
+            steps {
+                sh '''
+                    sudo cp $PROJECT_DIR/index.html $NGINX_DIR/
+                '''
+            }
+        }
+
+        stage('Restart Nginx') {
+            steps {
+                sh '''
+                    sudo systemctl restart nginx
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployment Successful 🎉"
+        }
+        failure {
+            echo "Deployment Failed ❌"
+        }
+    }
+}
