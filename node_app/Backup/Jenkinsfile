@@ -6,7 +6,7 @@ pipeline {
         stage('Backup Application') {
             steps {
                 script {
-                    echo "📦 Taking full app backup..."
+                    echo "📦 Taking validated backup..."
 
                     sh '''
                         set -e
@@ -16,21 +16,70 @@ pipeline {
                         BACKUP_BASE="/opt/backups"
 
                         PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
-                        BACKUP_DIR="${BACKUP_BASE}/${PROJECT_NAME}"
+                        BACKUP_PARENT="${BACKUP_BASE}/${PROJECT_NAME}"
 
                         if [ ! -d "$PROJECT_DIR" ]; then
                             echo "❌ Project directory not found"
                             exit 1
                         fi
 
-                        if [ -d "$BACKUP_DIR" ]; then
-                            sudo rm -rf "$BACKUP_DIR"
-                        fi
+                        # Create timestamp backup
+                        TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+                        BACKUP_DIR="${BACKUP_PARENT}/backup_$TIMESTAMP"
+
+                        echo "📁 Creating backup: $BACKUP_DIR"
 
                         sudo mkdir -p "$BACKUP_DIR"
+
+                        # Copy project
                         sudo rsync -a "$PROJECT_DIR"/ "$BACKUP_DIR"/
 
-                        echo "✅ Backup completed"
+                        echo "🔍 Validating backup..."
+
+                        # 1. Check backup exists
+                        if [ ! -d "$BACKUP_DIR" ]; then
+                            echo "❌ Backup directory not created"
+                            exit 1
+                        fi
+
+                        # 2. Check not empty
+                        if [ -z "$(ls -A $BACKUP_DIR)" ]; then
+                            echo "❌ Backup is empty"
+                            exit 1
+                        fi
+
+                        # 3. Check important folders/files
+                        if [ ! -d "$BACKUP_DIR/backend" ]; then
+                            echo "❌ Backend folder missing in backup"
+                            exit 1
+                        fi
+
+                        if [ ! -f "$BACKUP_DIR/backend/package.json" ]; then
+                            echo "❌ package.json missing in backup"
+                            exit 1
+                        fi
+
+                        # 4. Compare file count (basic validation)
+                        SRC_COUNT=$(find "$PROJECT_DIR" | wc -l)
+                        DEST_COUNT=$(find "$BACKUP_DIR" | wc -l)
+
+                        echo "📊 Source files: $SRC_COUNT"
+                        echo "📊 Backup files: $DEST_COUNT"
+
+                        if [ "$DEST_COUNT" -lt "$SRC_COUNT" ]; then
+                            echo "❌ Backup incomplete (file count mismatch)"
+                            exit 1
+                        fi
+
+                        echo "🧹 Keeping only last 5 backups..."
+
+                        cd "$BACKUP_PARENT"
+                        ls -dt backup_* | tail -n +6 | xargs -r rm -rf
+
+                        echo "📂 Available backups:"
+                        ls -dt backup_*
+
+                        echo "✅ Backup validation successful"
                     '''
                 }
             }
