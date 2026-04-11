@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        PROJECT_NAME = "simpleweb_v2"   // 👈 your new folder
+        PROJECT_NAME = "simpleweb_v2"
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
         NGINX_DIR    = "/var/www/html"
@@ -41,10 +41,12 @@ pipeline {
 
         stage('Validate File') {
             steps {
-                echo "🔍 Checking index.html..."
+                echo "🔍 Checking index.html inside simpleweb..."
                 sh '''
-                    if [ ! -f "$PROJECT_DIR/index.html" ]; then
-                        echo "❌ index.html not found!"
+                    ls $PROJECT_DIR/simpleweb
+
+                    if [ ! -f "$PROJECT_DIR/simpleweb/index.html" ]; then
+                        echo "❌ index.html not found in simpleweb folder!"
                         exit 1
                     fi
                 '''
@@ -55,7 +57,7 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Nginx..."
                 sh '''
-                    sudo cp $PROJECT_DIR/index.html $NGINX_DIR/
+                    sudo cp -r $PROJECT_DIR/simpleweb/* $NGINX_DIR/
                 '''
             }
         }
