@@ -6,7 +6,7 @@ pipeline {
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
         NGINX_DIR    = "/var/www/html"
-        REPO_URL     = "https://github.com/vjtech98157/simpleweb.git"
+        REPO_URL     = "https://github.com/vijayqadevkraft/webapplication-repo.git"
     }
 
     stages {
