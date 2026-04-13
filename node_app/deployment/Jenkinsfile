@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    // 🔥 Webhook trigger
+    triggers {
+        githubPush()
+    }
+
     options {
         disableConcurrentBuilds()
     }
@@ -14,14 +19,12 @@ pipeline {
 
     stages {
 
-        // ✅ Checkout pipeline repo (Jenkinsfile repo)
         stage('Checkout Pipeline Repo') {
             steps {
                 checkout scm
             }
         }
 
-        // ✅ Checkout actual application repo
         stage('Checkout App Repo') {
             steps {
                 dir('app') {
@@ -30,16 +33,20 @@ pipeline {
             }
         }
 
-        // ✅ Detect changes in APP repo (IMPORTANT FIX)
+        // ✅ FIXED CHANGE DETECTION (more reliable)
         stage('Check Changes') {
             steps {
                 script {
                     def changes = sh(
-                        script: "cd app && git diff --name-only HEAD~1 HEAD || true",
+                        script: """
+                            cd app
+                            git fetch origin main
+                            git diff --name-only origin/main~1 origin/main || true
+                        """,
                         returnStdout: true
                     ).trim()
 
-                    echo "Changed files in app repo: ${changes}"
+                    echo "Changed files: ${changes}"
 
                     if (changes.contains("frontend/")) {
                         env.RUN_FRONTEND = "true"
@@ -51,7 +58,6 @@ pipeline {
             }
         }
 
-        // ✅ Setup permissions
         stage('Setup Permissions') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -64,7 +70,6 @@ pipeline {
             }
         }
 
-        // ✅ Copy app code
         stage('Copy Code') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -78,7 +83,6 @@ pipeline {
             }
         }
 
-        // ✅ Install dependencies
         stage('Install Dependencies') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -91,7 +95,6 @@ pipeline {
             }
         }
 
-        // ✅ Build app
         stage('Build Application') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -104,7 +107,6 @@ pipeline {
             }
         }
 
-        // ✅ Deploy with PM2
         stage('Deploy with PM2') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -123,8 +125,7 @@ pipeline {
             }
         }
 
-        // ✅ Restart Nginx
-        stage('Configure Nginx') {
+        stage('Restart Nginx') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
             }
@@ -135,7 +136,6 @@ pipeline {
             }
         }
 
-        // ✅ Health check
         stage('Health Check') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
