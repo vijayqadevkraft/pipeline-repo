@@ -15,13 +15,21 @@ pipeline {
 
     stages {
 
+        stage('Checkout Code') {
+            steps {
+                echo "📥 Checking out code..."
+                dir("${PROJECT_DIR}") {
+                    git branch: 'main', url: "${REPO_URL}"
+                }
+            }
+        }
+
         stage('Check simpleweb Changes') {
             when {
-                beforeAgent true
                 changeset "simpleweb/**"
             }
             steps {
-                echo "✅ simpleweb changed → Running pipeline"
+                echo "✅ simpleweb changed → Continue pipeline"
             }
         }
 
@@ -30,22 +38,6 @@ pipeline {
                 sh '''
                     sudo mkdir -p $BASE_DIR
                     sudo chown -R jenkins:jenkins $BASE_DIR
-                '''
-            }
-        }
-
-        stage('Clean Old Code') {
-            steps {
-                sh '''
-                    rm -rf $PROJECT_DIR
-                '''
-            }
-        }
-
-        stage('Clone Fresh Code') {
-            steps {
-                sh '''
-                    git clone $REPO_URL $PROJECT_DIR
                 '''
             }
         }
