@@ -9,29 +9,43 @@ pipeline {
         PROJECT_NAME = "webapplication-repo"
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
+        RUN_FRONTEND = "false"
     }
 
     stages {
 
-        // ✅ IMPORTANT: Checkout FIRST
-        stage('Checkout SCM') {
+        // ✅ Checkout full repo
+        stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Run Only for Frontend Changes') {
-            when {
-                changeset "frontend/**"
-            }
+        // ✅ Detect changes (BEST PRACTICE)
+        stage('Check Changes') {
             steps {
-                echo "✅ Frontend changed → Running pipeline"
+                script {
+                    def changes = sh(
+                        script: "git diff --name-only HEAD~1 HEAD || true",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Changed files: ${changes}"
+
+                    if (changes.contains("frontend/")) {
+                        env.RUN_FRONTEND = "true"
+                        echo "✅ Frontend changes detected"
+                    } else {
+                        echo "❌ No frontend changes"
+                    }
+                }
             }
         }
 
+        // ✅ Run only if frontend changed
         stage('Setup Permissions') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
@@ -41,21 +55,24 @@ pipeline {
             }
         }
 
-        stage('Copy Code to Project Dir') {
+        // ✅ Copy code to project directory
+        stage('Copy Code') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
+                    rm -rf ${PROJECT_DIR}
                     mkdir -p ${PROJECT_DIR}
                     cp -r * ${PROJECT_DIR}/
                 '''
             }
         }
 
+        // ✅ Install dependencies
         stage('Install Dependencies') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
@@ -65,9 +82,10 @@ pipeline {
             }
         }
 
+        // ✅ Build app
         stage('Build Application') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
@@ -77,9 +95,10 @@ pipeline {
             }
         }
 
+        // ✅ Deploy using PM2
         stage('Deploy with PM2') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
@@ -95,9 +114,10 @@ pipeline {
             }
         }
 
+        // ✅ Restart Nginx
         stage('Configure Nginx') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
@@ -106,9 +126,10 @@ pipeline {
             }
         }
 
+        // ✅ Health check
         stage('Health Check') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
                 sh '''
