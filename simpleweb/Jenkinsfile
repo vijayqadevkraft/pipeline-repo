@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        disableConcurrentBuilds()
+    }
+
     environment {
         PROJECT_NAME = "simpleweb_v2"
         BASE_DIR     = "/opt/projects"
@@ -11,9 +15,18 @@ pipeline {
 
     stages {
 
+        stage('Check simpleweb Changes') {
+            when {
+                beforeAgent true
+                changeset "simpleweb/**"
+            }
+            steps {
+                echo "✅ simpleweb changed → Running pipeline"
+            }
+        }
+
         stage('Setup Permissions') {
             steps {
-                echo "🔐 Setting up directories..."
                 sh '''
                     sudo mkdir -p $BASE_DIR
                     sudo chown -R jenkins:jenkins $BASE_DIR
@@ -23,7 +36,6 @@ pipeline {
 
         stage('Clean Old Code') {
             steps {
-                echo "🧹 Cleaning project directory..."
                 sh '''
                     rm -rf $PROJECT_DIR
                 '''
@@ -32,7 +44,6 @@ pipeline {
 
         stage('Clone Fresh Code') {
             steps {
-                echo "📥 Cloning latest code..."
                 sh '''
                     git clone $REPO_URL $PROJECT_DIR
                 '''
@@ -41,12 +52,11 @@ pipeline {
 
         stage('Validate File') {
             steps {
-                echo "🔍 Checking index.html inside simpleweb..."
                 sh '''
                     ls $PROJECT_DIR/simpleweb
 
                     if [ ! -f "$PROJECT_DIR/simpleweb/index.html" ]; then
-                        echo "❌ index.html not found in simpleweb folder!"
+                        echo "❌ index.html not found!"
                         exit 1
                     fi
                 '''
@@ -55,8 +65,8 @@ pipeline {
 
         stage('Deploy to Nginx') {
             steps {
-                echo "🚀 Deploying to Nginx..."
                 sh '''
+                    sudo rm -rf $NGINX_DIR/*
                     sudo cp -r $PROJECT_DIR/simpleweb/* $NGINX_DIR/
                 '''
             }
@@ -64,7 +74,6 @@ pipeline {
 
         stage('Reload Nginx') {
             steps {
-                echo "🔄 Reloading Nginx..."
                 sh '''
                     sudo systemctl reload nginx
                 '''
@@ -73,7 +82,6 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                echo "✅ Verifying deployment..."
                 sh '''
                     curl -I http://localhost
                 '''
