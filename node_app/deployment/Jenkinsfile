@@ -13,6 +13,13 @@ pipeline {
 
     stages {
 
+        // ✅ IMPORTANT: Checkout FIRST
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+            }
+        }
+
         stage('Run Only for Frontend Changes') {
             when {
                 changeset "frontend/**"
@@ -34,14 +41,15 @@ pipeline {
             }
         }
 
-        stage('Checkout Code') {
+        stage('Copy Code to Project Dir') {
             when {
                 changeset "frontend/**"
             }
             steps {
-                dir("${PROJECT_DIR}") {
-                    git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-                }
+                sh '''
+                    mkdir -p ${PROJECT_DIR}
+                    cp -r * ${PROJECT_DIR}/
+                '''
             }
         }
 
