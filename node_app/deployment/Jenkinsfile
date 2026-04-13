@@ -6,31 +6,40 @@ pipeline {
     }
 
     environment {
-        PROJECT_NAME = "webapplication-repo"
         BASE_DIR     = "/opt/projects"
+        PROJECT_NAME = "webapplication-repo"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
         RUN_FRONTEND = "false"
     }
 
     stages {
 
-        // ✅ Checkout full repo
-        stage('Checkout') {
+        // ✅ Checkout pipeline repo (Jenkinsfile repo)
+        stage('Checkout Pipeline Repo') {
             steps {
                 checkout scm
             }
         }
 
-        // ✅ Detect changes (BEST PRACTICE)
+        // ✅ Checkout actual application repo
+        stage('Checkout App Repo') {
+            steps {
+                dir('app') {
+                    git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+                }
+            }
+        }
+
+        // ✅ Detect changes in APP repo (IMPORTANT FIX)
         stage('Check Changes') {
             steps {
                 script {
                     def changes = sh(
-                        script: "git diff --name-only HEAD~1 HEAD || true",
+                        script: "cd app && git diff --name-only HEAD~1 HEAD || true",
                         returnStdout: true
                     ).trim()
 
-                    echo "Changed files: ${changes}"
+                    echo "Changed files in app repo: ${changes}"
 
                     if (changes.contains("frontend/")) {
                         env.RUN_FRONTEND = "true"
@@ -42,7 +51,7 @@ pipeline {
             }
         }
 
-        // ✅ Run only if frontend changed
+        // ✅ Setup permissions
         stage('Setup Permissions') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -55,7 +64,7 @@ pipeline {
             }
         }
 
-        // ✅ Copy code to project directory
+        // ✅ Copy app code
         stage('Copy Code') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
@@ -64,7 +73,7 @@ pipeline {
                 sh '''
                     rm -rf ${PROJECT_DIR}
                     mkdir -p ${PROJECT_DIR}
-                    cp -r * ${PROJECT_DIR}/
+                    cp -r app/* ${PROJECT_DIR}/
                 '''
             }
         }
@@ -95,7 +104,7 @@ pipeline {
             }
         }
 
-        // ✅ Deploy using PM2
+        // ✅ Deploy with PM2
         stage('Deploy with PM2') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
