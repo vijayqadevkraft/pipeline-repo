@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        disableConcurrentBuilds()
+    }
+
     environment {
         PROJECT_NAME = "webapplication-repo"
         BASE_DIR     = "/opt/projects"
@@ -9,125 +13,100 @@ pipeline {
 
     stages {
 
-        stage('Setup Permissions') {
+        stage('Run Only for Frontend Changes') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "🔐 Setting up directories..."
-                    sh '''
-                        sudo mkdir -p /opt/projects
-                        sudo chown -R jenkins:jenkins /opt/projects
-                    '''
-                }
+                echo "✅ Frontend changed → Running pipeline"
+            }
+        }
+
+        stage('Setup Permissions') {
+            when {
+                changeset "frontend/**"
+            }
+            steps {
+                sh '''
+                    sudo mkdir -p /opt/projects
+                    sudo chown -R jenkins:jenkins /opt/projects
+                '''
             }
         }
 
         stage('Checkout Code') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "📥 Cloning repository..."
-                    sh '''
-                        mkdir -p ${PROJECT_DIR}
-                    '''
-                    dir("${PROJECT_DIR}") {
-                        git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-                    }
+                dir("${PROJECT_DIR}") {
+                    git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
                 }
             }
         }
 
         stage('Install Dependencies') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "📦 Installing dependencies..."
-                    sh '''
-                        cd ${PROJECT_DIR}/backend
-                        npm install
-                    '''
-                }
+                sh '''
+                    cd ${PROJECT_DIR}/backend
+                    npm install
+                '''
             }
         }
 
         stage('Build Application') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "🏗️ Building application..."
-                    sh '''
-                        cd ${PROJECT_DIR}/backend
-                        npm run build || echo "⚠️ No build step"
-                    '''
-                }
+                sh '''
+                    cd ${PROJECT_DIR}/backend
+                    npm run build || echo "No build step"
+                '''
             }
         }
 
-        stage('Deploy with PM2 (Ubuntu User)') {
+        stage('Deploy with PM2') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "🚀 Deploying app as ubuntu user..."
+                sh '''
+                    cd ${PROJECT_DIR}/backend
 
-                    sh '''
-                        cd ${PROJECT_DIR}/backend
+                    if ! command -v pm2 > /dev/null; then
+                        sudo npm install -g pm2
+                    fi
 
-                        # Install PM2 if not exists
-                        if ! command -v pm2 > /dev/null; then
-                            sudo npm install -g pm2
-                        fi
-
-                        # Restart if exists, else start
-                        sudo -u ubuntu pm2 restart webapp || sudo -u ubuntu pm2 start server.js --name webapp
-
-                        # Save PM2 config
-                        sudo -u ubuntu pm2 save
-                    '''
-                }
+                    sudo -u ubuntu pm2 restart webapp || sudo -u ubuntu pm2 start server.js --name webapp
+                    sudo -u ubuntu pm2 save
+                '''
             }
         }
 
         stage('Configure Nginx') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "🌐 Configuring Nginx..."
-                    sh '''
-                        sudo bash -c 'cat > /etc/nginx/sites-available/default <<EOF
-server {
-    listen 80;
-    server_name _;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \\$host;
-        proxy_cache_bypass \\$http_upgrade;
-    }
-}
-EOF'
-
-                        sudo nginx -t
-                        sudo systemctl restart nginx
-                    '''
-                }
+                sh '''
+                    sudo systemctl restart nginx
+                '''
             }
         }
 
         stage('Health Check') {
+            when {
+                changeset "frontend/**"
+            }
             steps {
-                script {
-                    echo "🩺 Running health check..."
-
-                    sh '''
-                        sleep 5
-
-                        echo "🔍 Health Check:"
-                        curl -f http://localhost:3000/health
-
-                        echo "📡 Port Check:"
-                        netstat -tulnp | grep 3000 || echo "⚠️ Port not running"
-
-                        echo "📜 PM2 Logs (last 20 lines):"
-                        sudo -u ubuntu pm2 logs webapp --lines 20 --nostream || true
-                    '''
-                }
+                sh '''
+                    sleep 5
+                    curl -f http://localhost:3000/health
+                '''
             }
         }
     }
@@ -136,11 +115,9 @@ EOF'
         success {
             echo "✅ Deployment completed successfully!"
         }
-
         failure {
-            echo "❌ Deployment failed. Check logs."
+            echo "❌ Deployment failed."
         }
-
         always {
             echo "📋 Pipeline finished."
         }
