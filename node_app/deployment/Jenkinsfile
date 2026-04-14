@@ -5,10 +5,6 @@ pipeline {
         githubPush()
     }
 
-    options {
-        disableConcurrentBuilds()
-    }
-
     environment {
         RUN_FRONTEND = "false"
     }
@@ -30,7 +26,6 @@ pipeline {
             }
         }
 
-        // 🔥 FIXED: Change detection from APP repo
         stage('Check Changes') {
             steps {
                 script {
@@ -53,46 +48,58 @@ pipeline {
         }
 
         stage('Setup Permissions') {
-            when {
-                expression { env.RUN_FRONTEND == "true" }
-            }
             steps {
-                echo "🔧 Setting permissions..."
-                sh "sudo chmod -R 755 /var/www/html"
+                script {
+                    if (env.RUN_FRONTEND == "true") {
+                        echo "🔧 Setting permissions..."
+                        sh "sudo chmod -R 755 /var/www/html"
+                    } else {
+                        echo "⏭ Skipping Setup Permissions"
+                    }
+                }
             }
         }
 
         stage('Deploy Frontend') {
-            when {
-                expression { env.RUN_FRONTEND == "true" }
-            }
             steps {
-                echo "📂 Deploying frontend..."
+                script {
+                    if (env.RUN_FRONTEND == "true") {
+                        echo "📂 Deploying frontend..."
 
-                sh """
-                sudo rm -rf /var/www/html/*
-                sudo cp -r app/frontend/* /var/www/html/
-                """
+                        sh """
+                        sudo rm -rf /var/www/html/*
+                        sudo cp -r app/frontend/* /var/www/html/
+                        """
+                    } else {
+                        echo "⏭ Skipping Deployment"
+                    }
+                }
             }
         }
 
         stage('Restart Nginx') {
-            when {
-                expression { env.RUN_FRONTEND == "true" }
-            }
             steps {
-                echo "🔄 Restarting Nginx..."
-                sh "sudo systemctl restart nginx"
+                script {
+                    if (env.RUN_FRONTEND == "true") {
+                        echo "🔄 Restarting Nginx..."
+                        sh "sudo systemctl restart nginx"
+                    } else {
+                        echo "⏭ Skipping Nginx Restart"
+                    }
+                }
             }
         }
 
         stage('Health Check') {
-            when {
-                expression { env.RUN_FRONTEND == "true" }
-            }
             steps {
-                echo "🌐 Checking app..."
-                sh "curl -I http://localhost || exit 1"
+                script {
+                    if (env.RUN_FRONTEND == "true") {
+                        echo "🌐 Checking app..."
+                        sh "curl -I http://localhost || exit 1"
+                    } else {
+                        echo "⏭ Skipping Health Check"
+                    }
+                }
             }
         }
     }
