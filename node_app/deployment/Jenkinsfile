@@ -15,22 +15,31 @@ pipeline {
 
     stages {
 
-        stage('Checkout Code') {
+        stage('Checkout Pipeline Repo') {
             steps {
                 checkout scm
             }
         }
 
-        // 🔥 MUST HAVE STAGE (Fix your issue)
+        stage('Checkout App Repo') {
+            steps {
+                dir('app') {
+                    git branch: 'main',
+                        url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+                }
+            }
+        }
+
+        // 🔥 FIXED: Change detection from APP repo
         stage('Check Changes') {
             steps {
                 script {
                     def changes = sh(
-                        script: "git diff --name-only HEAD~1 HEAD",
+                        script: "cd app && git fetch origin main && git diff --name-only origin/main~1 origin/main",
                         returnStdout: true
                     ).trim()
 
-                    echo "Changed files: ${changes}"
+                    echo "Changed files in app repo: ${changes}"
 
                     if (changes.contains("frontend/")) {
                         echo "✅ Frontend changes detected"
@@ -62,7 +71,7 @@ pipeline {
 
                 sh """
                 sudo rm -rf /var/www/html/*
-                sudo cp -r frontend/* /var/www/html/
+                sudo cp -r app/frontend/* /var/www/html/
                 """
             }
         }
