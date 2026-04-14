@@ -24,12 +24,25 @@ pipeline {
             }
         }
 
+        // 🔥 FIXED STAGE (Stops pipeline if no relevant changes)
         stage('Check simpleweb Changes') {
-            when {
-                changeset "simpleweb/**"
-            }
             steps {
-                echo "✅ simpleweb changed → Continue pipeline"
+                script {
+                    def changes = sh(
+                        script: "cd ${PROJECT_DIR} && git fetch origin main && git diff --name-only origin/main~1 origin/main",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Changed files: ${changes}"
+
+                    if (!changes.contains("simpleweb/")) {
+                        echo "❌ No changes in simpleweb → Stopping pipeline"
+                        currentBuild.result = 'NOT_BUILT'
+                        error("Stopping pipeline - no relevant changes")
+                    } else {
+                        echo "✅ simpleweb changed → Continue pipeline"
+                    }
+                }
             }
         }
 
