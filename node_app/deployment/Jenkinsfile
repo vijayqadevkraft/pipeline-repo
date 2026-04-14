@@ -10,34 +10,23 @@ pipeline {
     }
 
     environment {
-        BASE_DIR     = "/opt/projects"
-        PROJECT_NAME = "webapplication-repo"
-        PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
         RUN_FRONTEND = "false"
     }
 
     stages {
 
-        stage('Checkout Pipeline Repo') {
+        stage('Checkout Code') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Checkout App Repo') {
-            steps {
-                dir('app') {
-                    git branch: 'main',
-                        url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-                }
-            }
-        }
-
+        // 🔥 MUST HAVE STAGE (Fix your issue)
         stage('Check Changes') {
             steps {
                 script {
                     def changes = sh(
-                        script: "cd app && git fetch origin main && git diff --name-only origin/main~1 origin/main",
+                        script: "git diff --name-only HEAD~1 HEAD",
                         returnStdout: true
                     ).trim()
 
@@ -60,19 +49,20 @@ pipeline {
             }
             steps {
                 echo "🔧 Setting permissions..."
-                sh "sudo chmod -R 755 ${PROJECT_DIR}"
+                sh "sudo chmod -R 755 /var/www/html"
             }
         }
 
-        stage('Copy Code') {
+        stage('Deploy Frontend') {
             when {
                 expression { env.RUN_FRONTEND == "true" }
             }
             steps {
-                echo "📂 Copying frontend files..."
+                echo "📂 Deploying frontend..."
+
                 sh """
                 sudo rm -rf /var/www/html/*
-                sudo cp -r app/frontend/* /var/www/html/
+                sudo cp -r frontend/* /var/www/html/
                 """
             }
         }
@@ -92,7 +82,7 @@ pipeline {
                 expression { env.RUN_FRONTEND == "true" }
             }
             steps {
-                echo "🌐 Checking application..."
+                echo "🌐 Checking app..."
                 sh "curl -I http://localhost || exit 1"
             }
         }
