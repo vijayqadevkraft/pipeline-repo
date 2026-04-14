@@ -1,125 +1,112 @@
 pipeline {
     agent any
 
+    triggers {
+        githubPush()
+    }
+
     options {
         disableConcurrentBuilds()
     }
 
     environment {
-        PROJECT_NAME = "webapplication-repo"
         BASE_DIR     = "/opt/projects"
+        PROJECT_NAME = "webapplication-repo"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
+        RUN_FRONTEND = "false"
     }
 
     stages {
 
-        stage('Run Only for Frontend Changes') {
-            when {
-                changeset "frontend/**"
-            }
+        stage('Checkout Pipeline Repo') {
             steps {
-                echo "✅ Frontend changed → Running pipeline"
+                checkout scm
+            }
+        }
+
+        stage('Checkout App Repo') {
+            steps {
+                dir('app') {
+                    git branch: 'main',
+                        url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+                }
+            }
+        }
+
+        stage('Check Changes') {
+            steps {
+                script {
+                    def changes = sh(
+                        script: "cd app && git fetch origin main && git diff --name-only origin/main~1 origin/main",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Changed files: ${changes}"
+
+                    if (changes.contains("frontend/")) {
+                        echo "✅ Frontend changes detected"
+                        env.RUN_FRONTEND = "true"
+                    } else {
+                        echo "❌ No frontend changes"
+                        env.RUN_FRONTEND = "false"
+                    }
+                }
             }
         }
 
         stage('Setup Permissions') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
-                sh '''
-                    sudo mkdir -p /opt/projects
-                    sudo chown -R jenkins:jenkins /opt/projects
-                '''
+                echo "🔧 Setting permissions..."
+                sh "sudo chmod -R 755 ${PROJECT_DIR}"
             }
         }
 
-        stage('Checkout Code') {
+        stage('Copy Code') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
-                dir("${PROJECT_DIR}") {
-                    git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-                }
+                echo "📂 Copying frontend files..."
+                sh """
+                sudo rm -rf /var/www/html/*
+                sudo cp -r app/frontend/* /var/www/html/
+                """
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Restart Nginx') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
-                sh '''
-                    cd ${PROJECT_DIR}/backend
-                    npm install
-                '''
-            }
-        }
-
-        stage('Build Application') {
-            when {
-                changeset "frontend/**"
-            }
-            steps {
-                sh '''
-                    cd ${PROJECT_DIR}/backend
-                    npm run build || echo "No build step"
-                '''
-            }
-        }
-
-        stage('Deploy with PM2') {
-            when {
-                changeset "frontend/**"
-            }
-            steps {
-                sh '''
-                    cd ${PROJECT_DIR}/backend
-
-                    if ! command -v pm2 > /dev/null; then
-                        sudo npm install -g pm2
-                    fi
-
-                    sudo -u ubuntu pm2 restart webapp || sudo -u ubuntu pm2 start server.js --name webapp
-                    sudo -u ubuntu pm2 save
-                '''
-            }
-        }
-
-        stage('Configure Nginx') {
-            when {
-                changeset "frontend/**"
-            }
-            steps {
-                sh '''
-                    sudo systemctl restart nginx
-                '''
+                echo "🔄 Restarting Nginx..."
+                sh "sudo systemctl restart nginx"
             }
         }
 
         stage('Health Check') {
             when {
-                changeset "frontend/**"
+                expression { env.RUN_FRONTEND == "true" }
             }
             steps {
-                sh '''
-                    sleep 5
-                    curl -f http://localhost:3000/health
-                '''
+                echo "🌐 Checking application..."
+                sh "curl -I http://localhost || exit 1"
             }
         }
     }
 
     post {
+        always {
+            echo "📋 Pipeline finished."
+        }
         success {
             echo "✅ Deployment completed successfully!"
         }
         failure {
-            echo "❌ Deployment failed."
-        }
-        always {
-            echo "📋 Pipeline finished."
+            echo "❌ Deployment failed!"
         }
     }
 }
