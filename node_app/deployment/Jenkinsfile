@@ -1,66 +1,30 @@
 pipeline {
     agent any
 
-    // 🔥 Webhook trigger
-    triggers {
-        githubPush()
-    }
-
     options {
         disableConcurrentBuilds()
     }
 
     environment {
-        BASE_DIR     = "/opt/projects"
         PROJECT_NAME = "webapplication-repo"
+        BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
-        RUN_FRONTEND = "false"
     }
 
     stages {
 
-        stage('Checkout Pipeline Repo') {
-            steps {
-                checkout scm
+        stage('Run Only for Frontend Changes') {
+            when {
+                changeset "frontend/**"
             }
-        }
-
-        stage('Checkout App Repo') {
             steps {
-                dir('app') {
-                    git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
-                }
-            }
-        }
-
-        // ✅ FIXED CHANGE DETECTION (more reliable)
-        stage('Check Changes') {
-            steps {
-                script {
-                    def changes = sh(
-                        script: """
-                            cd app
-                            git fetch origin main
-                            git diff --name-only origin/main~1 origin/main || true
-                        """,
-                        returnStdout: true
-                    ).trim()
-
-                    echo "Changed files: ${changes}"
-
-                    if (changes.contains("frontend/")) {
-                        env.RUN_FRONTEND = "true"
-                        echo "✅ Frontend changes detected"
-                    } else {
-                        echo "❌ No frontend changes"
-                    }
-                }
+                echo "✅ Frontend changed → Running pipeline"
             }
         }
 
         stage('Setup Permissions') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
                 sh '''
@@ -70,22 +34,20 @@ pipeline {
             }
         }
 
-        stage('Copy Code') {
+        stage('Checkout Code') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
-                sh '''
-                    rm -rf ${PROJECT_DIR}
-                    mkdir -p ${PROJECT_DIR}
-                    cp -r app/* ${PROJECT_DIR}/
-                '''
+                dir("${PROJECT_DIR}") {
+                    git branch: 'main', url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+                }
             }
         }
 
         stage('Install Dependencies') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
                 sh '''
@@ -97,7 +59,7 @@ pipeline {
 
         stage('Build Application') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
                 sh '''
@@ -109,7 +71,7 @@ pipeline {
 
         stage('Deploy with PM2') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
                 sh '''
@@ -125,9 +87,9 @@ pipeline {
             }
         }
 
-        stage('Restart Nginx') {
+        stage('Configure Nginx') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
                 sh '''
@@ -138,7 +100,7 @@ pipeline {
 
         stage('Health Check') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                changeset "frontend/**"
             }
             steps {
                 sh '''
