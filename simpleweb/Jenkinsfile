@@ -6,9 +6,8 @@ pipeline {
     }
 
     environment {
-        PROJECT_NAME = "simpleweb_v2"
         BASE_DIR     = "/opt/projects"
-        PROJECT_DIR  = "${BASE_DIR}/${PROJECT_NAME}"
+        PROJECT_DIR  = "${BASE_DIR}/webapplication-repo"
         NGINX_DIR    = "/var/www/html"
         REPO_URL     = "https://github.com/vijayqadevkraft/webapplication-repo.git"
     }
@@ -24,40 +23,28 @@ pipeline {
             }
         }
 
-        // 🔥 FIXED STAGE (Stops pipeline if no relevant changes)
-        stage('Check simpleweb Changes') {
+        stage('Check simpleweb Changes (Webhook Based)') {
             steps {
                 script {
-                    def changes = sh(
-                        script: "cd ${PROJECT_DIR} && git fetch origin main && git diff --name-only origin/main~1 origin/main",
-                        returnStdout: true
-                    ).trim()
+                    def changes = env.changed_files ?: ""
 
-                    echo "Changed files: ${changes}"
+                    echo "Changed files from webhook: ${changes}"
 
                     if (!changes.contains("simpleweb/")) {
-                        echo "❌ No changes in simpleweb → Stopping pipeline"
+                        echo "❌ No changes in simpleweb → Skipping"
                         currentBuild.result = 'NOT_BUILT'
-                        error("Stopping pipeline - no relevant changes")
+                        error("Stopping pipeline")
                     } else {
-                        echo "✅ simpleweb changed → Continue pipeline"
+                        echo "✅ simpleweb changed → Continue"
                     }
                 }
-            }
-        }
-
-        stage('Setup Permissions') {
-            steps {
-                sh '''
-                    sudo mkdir -p $BASE_DIR
-                    sudo chown -R jenkins:jenkins $BASE_DIR
-                '''
             }
         }
 
         stage('Validate File') {
             steps {
                 sh '''
+                    echo "🔍 Validating simpleweb files..."
                     ls $PROJECT_DIR/simpleweb
 
                     if [ ! -f "$PROJECT_DIR/simpleweb/index.html" ]; then
@@ -68,27 +55,28 @@ pipeline {
             }
         }
 
-        stage('Deploy to Nginx') {
+        stage('Deploy to Nginx (Safe)') {
             steps {
                 sh '''
-                    sudo rm -rf $NGINX_DIR/*
-                    sudo cp -r $PROJECT_DIR/simpleweb/* $NGINX_DIR/
+                    echo "🚀 Deploying simpleweb..."
+
+                    sudo mkdir -p $NGINX_DIR/simpleweb
+                    sudo cp -r $PROJECT_DIR/simpleweb/* $NGINX_DIR/simpleweb/
                 '''
             }
         }
 
         stage('Reload Nginx') {
             steps {
-                sh '''
-                    sudo systemctl reload nginx
-                '''
+                sh 'sudo systemctl reload nginx'
             }
         }
 
         stage('Verify Deployment') {
             steps {
                 sh '''
-                    curl -I http://localhost
+                    echo "🌐 Checking simpleweb..."
+                    curl -I http://localhost/simpleweb/ || exit 1
                 '''
             }
         }
@@ -96,7 +84,7 @@ pipeline {
 
     post {
         success {
-            echo "🎉 Deployment Successful!"
+            echo "🎉 SimpleWeb Deployment Successful!"
         }
         failure {
             echo "❌ Deployment Failed!"
