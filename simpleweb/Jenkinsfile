@@ -9,92 +9,147 @@ pipeline {
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/webapplication-repo"
         NGINX_DIR    = "/var/www/html"
-        REPO_URL     = "https://github.com/vijayqadevkraft/webapplication-repo.git"
+
+        RUN_FRONTEND = "false"
+        RUN_BACKEND  = "false"
+        RUN_SIMPLEWEB = "false"
     }
 
     stages {
 
-        // 🔥 FIX PERMISSIONS (CRITICAL)
-        stage('Fix Permissions') {
-            steps {
-                sh '''
-                echo "🔐 Fixing permissions..."
-
-                sudo mkdir -p $BASE_DIR
-                sudo chown -R jenkins:jenkins $BASE_DIR
-
-                # remove git lock if exists
-                sudo rm -f $PROJECT_DIR/.git/config.lock || true
-                '''
-            }
-        }
-
         stage('Checkout Code') {
             steps {
-                echo "📥 Checking out code..."
+                script {
+                    echo "📥 Pulling latest code..."
 
-                dir("${PROJECT_DIR}") {
-                    git branch: 'main', url: "${REPO_URL}"
+                    sh '''
+                    if [ ! -d "$PROJECT_DIR/.git" ]; then
+                        git clone https://github.com/vijayqadevkraft/webapplication-repo.git $PROJECT_DIR
+                    else
+                        cd $PROJECT_DIR
+                        git pull origin main
+                    fi
+                    '''
                 }
             }
         }
 
-        // 🔥 WEBHOOK BASED CHECK
-        stage('Check simpleweb Changes') {
+        // 🔥 WEBHOOK BASED CHANGE DETECTION
+        stage('Detect Changes') {
             steps {
                 script {
                     def changes = env.files ?: "first_run"
 
-                    echo "Changed files from webhook: ${changes}"
+                    echo "📦 Webhook REF: ${env.ref}"
+                    echo "📂 Changed files: ${changes}"
 
-                    if (!changes.contains("simpleweb/") && changes != "first_run") {
-                        echo "⏭ No simpleweb changes → Skipping deployment"
-                        currentBuild.result = 'NOT_BUILT'
-                        return
+                    // First run → deploy everything
+                    if (changes == "first_run") {
+                        env.RUN_FRONTEND = "true"
+                        env.RUN_BACKEND  = "true"
+                        env.RUN_SIMPLEWEB = "true"
                     }
 
-                    echo "✅ simpleweb changed → Continue"
+                    // Full stack app
+                    if (changes.contains("app/")) {
+                        echo "✅ Full stack app changed"
+                        env.RUN_FRONTEND = "true"
+                        env.RUN_BACKEND  = "true"
+                    }
+
+                    // Simpleweb
+                    if (changes.contains("simpleweb/")) {
+                        echo "✅ Simpleweb changed"
+                        env.RUN_SIMPLEWEB = "true"
+                    }
                 }
             }
         }
 
-        stage('Validate File') {
+        // 🔥 FULL STACK DEPLOY
+        stage('Deploy Full Stack App') {
+            when {
+                expression { env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
+            }
             steps {
                 sh '''
-                    echo "🔍 Validating simpleweb files..."
-                    ls $PROJECT_DIR/simpleweb
+                echo "🚀 Deploying Full Stack App..."
 
-                    if [ ! -f "$PROJECT_DIR/simpleweb/index.html" ]; then
-                        echo "❌ index.html not found!"
-                        exit 1
-                    fi
+                # Frontend
+                sudo mkdir -p /var/www/html/main
+                sudo cp -r $PROJECT_DIR/app/frontend/* /var/www/html/main/
+
+                # Backend
+                cd $PROJECT_DIR/app/backend
+                npm install
+
+                # Restart backend safely
+                pkill -f server.js || true
+                nohup node server.js > backend.log 2>&1 &
                 '''
             }
         }
 
-        // 🔥 SAFE DEPLOY
-        stage('Deploy to Nginx') {
+        // 🔥 SIMPLEWEB DEPLOY
+        stage('Deploy SimpleWeb') {
+            when {
+                expression { env.RUN_SIMPLEWEB == "true" }
+            }
             steps {
                 sh '''
-                    echo "🚀 Deploying simpleweb..."
+                echo "🚀 Deploying SimpleWeb..."
 
-                    sudo mkdir -p $NGINX_DIR/simpleweb
-                    sudo rsync -av --delete $PROJECT_DIR/simpleweb/ $NGINX_DIR/simpleweb/
+                sudo mkdir -p /var/www/html/simpleweb
+                sudo cp -r $PROJECT_DIR/simpleweb/* /var/www/html/simpleweb/
                 '''
             }
         }
 
-        stage('Reload Nginx') {
+        // 🔥 AUTO NGINX CONFIG (FIXED VERSION)
+        stage('Configure Nginx') {
             steps {
-                sh 'sudo systemctl reload nginx'
+                sh '''
+                echo "⚙️ Configuring Nginx..."
+
+                sudo tee /etc/nginx/sites-available/default > /dev/null <<EOF
+server {
+    listen 80;
+
+    location / {
+        root /var/www/html/main;
+        index index.html;
+        try_files \\$uri \\$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \\$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \\$host;
+    }
+
+    location /simpleweb/ {
+        alias /var/www/html/simpleweb/;
+        index index.html;
+    }
+}
+EOF
+
+                sudo nginx -t
+                sudo systemctl restart nginx
+                '''
             }
         }
 
-        stage('Verify Deployment') {
+        // 🔥 HEALTH CHECK
+        stage('Health Check') {
             steps {
                 sh '''
-                    echo "🌐 Checking simpleweb..."
-                    curl -I http://localhost/simpleweb/ || exit 1
+                echo "🌐 Running Health Checks..."
+
+                curl -I http://localhost || exit 1
+                curl -I http://localhost/simpleweb/ || exit 1
                 '''
             }
         }
@@ -102,13 +157,10 @@ pipeline {
 
     post {
         success {
-            echo "🎉 SimpleWeb Deployment Successful!"
+            echo "✅ Deployment successful 🚀"
         }
         failure {
-            echo "❌ Deployment Failed!"
-        }
-        aborted {
-            echo "⏭ Skipped (No changes detected)"
+            echo "❌ Deployment failed ❌"
         }
     }
 }
