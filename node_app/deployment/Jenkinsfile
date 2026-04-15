@@ -7,9 +7,6 @@ pipeline {
 
     environment {
         PROJECT_DIR = "app_repo"
-        RUN_FRONTEND = "false"
-        RUN_BACKEND  = "false"
-        RUN_SIMPLEWEB = "false"
     }
 
     stages {
@@ -36,30 +33,18 @@ pipeline {
 
                     echo "Changed files from webhook: ${changes}"
 
-                    if (changes == "first_run") {
-                        env.RUN_FRONTEND = "true"
-                        env.RUN_BACKEND  = "true"
-                        env.RUN_SIMPLEWEB = "true"
-                    }
-
-                    if (changes.contains("app/")) {
-                        echo "✅ Full stack app changed"
-                        env.RUN_FRONTEND = "true"
-                        env.RUN_BACKEND  = "true"
-                    }
-
-                    if (changes.contains("simpleweb/")) {
-                        echo "✅ Simpleweb changed"
-                        env.RUN_SIMPLEWEB = "true"
-                    }
+                    // Save in env for later use
+                    env.CHANGES = changes
                 }
             }
         }
 
-        // 🔥 FULL STACK DEPLOY
+        // 🔥 FULL STACK DEPLOY (FIXED CONDITION)
         stage('Deploy Full Stack App') {
             when {
-                expression { return env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
+                expression {
+                    return env.CHANGES.contains("app/") || env.CHANGES == "first_run"
+                }
             }
             steps {
                 sh '''
@@ -83,7 +68,9 @@ pipeline {
         // 🔥 SIMPLEWEB DEPLOY
         stage('Deploy SimpleWeb') {
             when {
-                expression { return env.RUN_SIMPLEWEB == "true" }
+                expression {
+                    return env.CHANGES.contains("simpleweb/") || env.CHANGES == "first_run"
+                }
             }
             steps {
                 sh '''
@@ -95,7 +82,7 @@ pipeline {
             }
         }
 
-        // 🔥 FIXED NGINX CONFIG
+        // 🔥 NGINX CONFIG (FIXED)
         stage('Configure Nginx') {
             steps {
                 sh '''
