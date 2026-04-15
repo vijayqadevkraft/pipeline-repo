@@ -14,16 +14,32 @@ pipeline {
 
     stages {
 
+        // 🔥 FIX PERMISSIONS (CRITICAL)
+        stage('Fix Permissions') {
+            steps {
+                sh '''
+                echo "🔐 Fixing permissions..."
+
+                sudo mkdir -p $BASE_DIR
+                sudo chown -R jenkins:jenkins $BASE_DIR
+
+                # remove git lock if exists
+                sudo rm -f $PROJECT_DIR/.git/config.lock || true
+                '''
+            }
+        }
+
         stage('Checkout Code') {
             steps {
                 echo "📥 Checking out code..."
+
                 dir("${PROJECT_DIR}") {
                     git branch: 'main', url: "${REPO_URL}"
                 }
             }
         }
 
-        // 🔥 WEBHOOK BASED CHECK (FIXED)
+        // 🔥 WEBHOOK BASED CHECK
         stage('Check simpleweb Changes') {
             steps {
                 script {
@@ -56,7 +72,7 @@ pipeline {
             }
         }
 
-        // 🔥 SAFE DEPLOY (RSYNC)
+        // 🔥 SAFE DEPLOY
         stage('Deploy to Nginx') {
             steps {
                 sh '''
