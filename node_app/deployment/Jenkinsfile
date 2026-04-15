@@ -6,31 +6,35 @@ pipeline {
     }
 
     environment {
-        RUN_FRONTEND = "false"
-        RUN_BACKEND  = "false"
-        RUN_SIMPLEWEB = "false"
+        PROJECT_DIR = "app_repo"
     }
 
     stages {
 
         stage('Checkout Code') {
             steps {
-                dir('app_repo') {
-                    git branch: 'main',
-                        url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
+                dir("${PROJECT_DIR}") {
+                    git clone -b main https://github.com/vijayqadevkraft/webapplication-repo.git .
                 }
             }
         }
 
-        stage('Check Changes') {
+        stage('Detect Changes (Safe)') {
             steps {
                 script {
                     def changes = sh(
-                        script: "cd app_repo && git fetch origin main && git diff --name-only origin/main~1 origin/main",
+                        script: "cd ${PROJECT_DIR} && git diff --name-only HEAD~1 HEAD || echo first_run",
                         returnStdout: true
                     ).trim()
 
                     echo "Changed files: ${changes}"
+
+                    // First run → deploy everything
+                    if (changes.contains("first_run")) {
+                        env.RUN_FRONTEND = "true"
+                        env.RUN_BACKEND  = "true"
+                        env.RUN_SIMPLEWEB = "true"
+                    }
 
                     if (changes.contains("app/frontend/")) {
                         env.RUN_FRONTEND = "true"
@@ -47,17 +51,27 @@ pipeline {
             }
         }
 
-        stage('Deploy Frontend') {
+        # 🔥 FULL STACK DEPLOY (IMPORTANT)
+        stage('Deploy Full Stack App') {
             when {
-                expression { env.RUN_FRONTEND == "true" }
+                expression { env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
             }
             steps {
-                sh """
-                echo "🚀 Deploying frontend..."
-                sudo rm -rf /var/www/html/main
+                sh '''
+                echo "🚀 Deploying full stack app..."
+
+                # frontend
                 sudo mkdir -p /var/www/html/main
                 sudo cp -r app_repo/app/frontend/* /var/www/html/main/
-                """
+
+                # backend
+                cd app_repo/app/backend
+                npm install
+
+                # safe restart
+                pkill -f server.js || true
+                nohup node server.js > backend.log 2>&1 &
+                '''
             }
         }
 
@@ -66,46 +80,61 @@ pipeline {
                 expression { env.RUN_SIMPLEWEB == "true" }
             }
             steps {
-                sh """
+                sh '''
                 echo "🚀 Deploying simpleweb..."
-                sudo rm -rf /var/www/html/simpleweb
                 sudo mkdir -p /var/www/html/simpleweb
                 sudo cp -r app_repo/simpleweb/* /var/www/html/simpleweb/
-                """
+                '''
             }
         }
 
-        stage('Start Backend') {
-            when {
-                expression { env.RUN_BACKEND == "true" }
-            }
+        # 🔥 AUTOMATE NGINX (NO MANUAL WORK)
+        stage('Configure Nginx') {
             steps {
-                sh """
-                echo "🚀 Starting backend..."
-                cd app_repo/app/backend
-                npm install
-                pkill node || true
-                nohup node server.js > backend.log 2>&1 &
-                """
-            }
-        }
+                sh '''
+                echo "⚙️ Configuring Nginx..."
 
-        stage('Restart Nginx') {
-            steps {
-                sh "sudo systemctl restart nginx"
+                sudo tee /etc/nginx/sites-available/default > /dev/null <<EOF
+server {
+    listen 80;
+
+    location / {
+        root /var/www/html/main;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://localhost:3000;
+    }
+
+    location /simpleweb/ {
+        alias /var/www/html/simpleweb/;
+        index index.html;
+    }
+}
+EOF
+
+                sudo nginx -t
+                sudo systemctl restart nginx
+                '''
             }
         }
 
         stage('Health Check') {
             steps {
-                sh "curl -I http://localhost || exit 1"
+                sh '''
+                echo "🌐 Checking app..."
+                curl -I http://localhost || exit 1
+                curl -I http://localhost/simpleweb/ || exit 1
+                '''
             }
         }
     }
 
     post {
         success {
-            echo "✅ Deployment successful"
+            echo "✅ Fully automated deployment successful"
         }
         failure {
             echo "❌ Deployment failed"
