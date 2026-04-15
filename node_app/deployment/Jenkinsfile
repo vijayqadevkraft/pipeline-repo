@@ -1,12 +1,15 @@
 pipeline {
     agent any
 
-    triggers {
-        githubPush()
+    options {
+        disableConcurrentBuilds()
     }
 
     environment {
         PROJECT_DIR = "app_repo"
+        RUN_FRONTEND = "false"
+        RUN_BACKEND  = "false"
+        RUN_SIMPLEWEB = "false"
     }
 
     stages {
@@ -19,39 +22,38 @@ pipeline {
             }
         }
 
-        stage('Detect Changes (Safe)') {
+        // 🔥 WEBHOOK BASED CHANGE DETECTION
+        stage('Detect Changes') {
             steps {
                 script {
-                    def changes = sh(
-                        script: "cd ${PROJECT_DIR} && git diff --name-only HEAD~1 HEAD || echo first_run",
-                        returnStdout: true
-                    ).trim()
+                    def changes = env.files ?: "first_run"
 
-                    echo "Changed files: ${changes}"
+                    echo "Changed files from webhook: ${changes}"
 
                     // First run → deploy everything
-                    if (changes.contains("first_run")) {
+                    if (changes == "first_run") {
                         env.RUN_FRONTEND = "true"
                         env.RUN_BACKEND  = "true"
                         env.RUN_SIMPLEWEB = "true"
                     }
 
-                    if (changes.contains("app/frontend/")) {
+                    // Full stack app (frontend + backend)
+                    if (changes.contains("app/")) {
+                        echo "✅ Full stack app changed"
                         env.RUN_FRONTEND = "true"
+                        env.RUN_BACKEND  = "true"
                     }
 
-                    if (changes.contains("app/backend/")) {
-                        env.RUN_BACKEND = "true"
-                    }
-
+                    // Simpleweb
                     if (changes.contains("simpleweb/")) {
+                        echo "✅ Simpleweb changed"
                         env.RUN_SIMPLEWEB = "true"
                     }
                 }
             }
         }
 
-        # 🔥 FULL STACK DEPLOY (IMPORTANT)
+        // 🔥 FULL STACK DEPLOY (ONE UNIT)
         stage('Deploy Full Stack App') {
             when {
                 expression { env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
@@ -75,6 +77,7 @@ pipeline {
             }
         }
 
+        // 🔥 SIMPLEWEB DEPLOY
         stage('Deploy SimpleWeb') {
             when {
                 expression { env.RUN_SIMPLEWEB == "true" }
@@ -88,7 +91,7 @@ pipeline {
             }
         }
 
-        # 🔥 AUTOMATE NGINX (NO MANUAL WORK)
+        // 🔥 AUTOMATE NGINX (NO MANUAL WORK)
         stage('Configure Nginx') {
             steps {
                 sh '''
@@ -101,7 +104,7 @@ server {
     location / {
         root /var/www/html/main;
         index index.html;
-        try_files $uri $uri/ /index.html;
+        try_files \$uri \$uri/ /index.html;
     }
 
     location /api/ {
