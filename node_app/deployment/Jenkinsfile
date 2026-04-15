@@ -16,8 +16,14 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                dir("${PROJECT_DIR}") {
-                    git clone -b main https://github.com/vijayqadevkraft/webapplication-repo.git .
+                script {
+                    sh '''
+                    if [ ! -d "app_repo/.git" ]; then
+                        git clone -b main https://github.com/vijayqadevkraft/webapplication-repo.git app_repo
+                    else
+                        cd app_repo && git pull origin main
+                    fi
+                    '''
                 }
             }
         }
@@ -30,21 +36,18 @@ pipeline {
 
                     echo "Changed files from webhook: ${changes}"
 
-                    // First run → deploy everything
                     if (changes == "first_run") {
                         env.RUN_FRONTEND = "true"
                         env.RUN_BACKEND  = "true"
                         env.RUN_SIMPLEWEB = "true"
                     }
 
-                    // Full stack app (frontend + backend)
                     if (changes.contains("app/")) {
                         echo "✅ Full stack app changed"
                         env.RUN_FRONTEND = "true"
                         env.RUN_BACKEND  = "true"
                     }
 
-                    // Simpleweb
                     if (changes.contains("simpleweb/")) {
                         echo "✅ Simpleweb changed"
                         env.RUN_SIMPLEWEB = "true"
@@ -53,7 +56,7 @@ pipeline {
             }
         }
 
-        // 🔥 FULL STACK DEPLOY (ONE UNIT)
+        // 🔥 FULL STACK DEPLOY
         stage('Deploy Full Stack App') {
             when {
                 expression { env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
@@ -62,9 +65,9 @@ pipeline {
                 sh '''
                 echo "🚀 Deploying full stack app..."
 
-                # frontend
+                # frontend (safe sync)
                 sudo mkdir -p /var/www/html/main
-                sudo cp -r app_repo/app/frontend/* /var/www/html/main/
+                sudo rsync -av --delete app_repo/app/frontend/ /var/www/html/main/
 
                 # backend
                 cd app_repo/app/backend
@@ -85,13 +88,14 @@ pipeline {
             steps {
                 sh '''
                 echo "🚀 Deploying simpleweb..."
+
                 sudo mkdir -p /var/www/html/simpleweb
-                sudo cp -r app_repo/simpleweb/* /var/www/html/simpleweb/
+                sudo rsync -av --delete app_repo/simpleweb/ /var/www/html/simpleweb/
                 '''
             }
         }
 
-        // 🔥 AUTOMATE NGINX (NO MANUAL WORK)
+        // 🔥 NGINX CONFIG (IDEMPOTENT)
         stage('Configure Nginx') {
             steps {
                 sh '''
@@ -109,6 +113,10 @@ server {
 
     location /api/ {
         proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
     }
 
     location /simpleweb/ {
@@ -119,7 +127,7 @@ server {
 EOF
 
                 sudo nginx -t
-                sudo systemctl restart nginx
+                sudo systemctl reload nginx
                 '''
             }
         }
@@ -128,6 +136,7 @@ EOF
             steps {
                 sh '''
                 echo "🌐 Checking app..."
+
                 curl -I http://localhost || exit 1
                 curl -I http://localhost/simpleweb/ || exit 1
                 '''
