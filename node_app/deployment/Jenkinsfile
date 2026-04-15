@@ -59,13 +59,13 @@ pipeline {
         // 🔥 FULL STACK DEPLOY
         stage('Deploy Full Stack App') {
             when {
-                expression { env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
+                expression { return env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
             }
             steps {
                 sh '''
                 echo "🚀 Deploying full stack app..."
 
-                # frontend (safe sync)
+                # frontend
                 sudo mkdir -p /var/www/html/main
                 sudo rsync -av --delete app_repo/app/frontend/ /var/www/html/main/
 
@@ -73,7 +73,7 @@ pipeline {
                 cd app_repo/app/backend
                 npm install
 
-                # safe restart
+                # restart backend safely
                 pkill -f server.js || true
                 nohup node server.js > backend.log 2>&1 &
                 '''
@@ -83,7 +83,7 @@ pipeline {
         // 🔥 SIMPLEWEB DEPLOY
         stage('Deploy SimpleWeb') {
             when {
-                expression { env.RUN_SIMPLEWEB == "true" }
+                expression { return env.RUN_SIMPLEWEB == "true" }
             }
             steps {
                 sh '''
@@ -95,7 +95,7 @@ pipeline {
             }
         }
 
-        // 🔥 NGINX CONFIG (IDEMPOTENT)
+        // 🔥 FIXED NGINX CONFIG
         stage('Configure Nginx') {
             steps {
                 sh '''
@@ -108,15 +108,15 @@ server {
     location / {
         root /var/www/html/main;
         index index.html;
-        try_files \$uri \$uri/ /index.html;
+        try_files \\$uri \\$uri/ /index.html;
     }
 
     location /api/ {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Upgrade \\$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
+        proxy_set_header Host \\$host;
     }
 
     location /simpleweb/ {
