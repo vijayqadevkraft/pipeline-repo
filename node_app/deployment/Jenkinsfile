@@ -7,19 +7,15 @@ pipeline {
 
     environment {
         RUN_FRONTEND = "false"
+        RUN_BACKEND  = "false"
+        RUN_SIMPLEWEB = "false"
     }
 
     stages {
 
-        stage('Checkout Pipeline Repo') {
+        stage('Checkout Code') {
             steps {
-                checkout scm
-            }
-        }
-
-        stage('Checkout App Repo') {
-            steps {
-                dir('app') {
+                dir('app_repo') {
                     git branch: 'main',
                         url: 'https://github.com/vijayqadevkraft/webapplication-repo.git'
                 }
@@ -30,89 +26,89 @@ pipeline {
             steps {
                 script {
                     def changes = sh(
-                        script: "cd app && git fetch origin main && git diff --name-only origin/main~1 origin/main",
+                        script: "cd app_repo && git fetch origin main && git diff --name-only origin/main~1 origin/main",
                         returnStdout: true
                     ).trim()
 
-                    echo "Changed files in app repo: ${changes}"
+                    echo "Changed files: ${changes}"
 
-                    if (changes.contains("frontend/")) {
-                        echo "✅ Frontend changes detected"
+                    if (changes.contains("app/frontend/")) {
                         env.RUN_FRONTEND = "true"
-                    } else {
-                        echo "❌ No frontend changes"
-                        env.RUN_FRONTEND = "false"
                     }
-                }
-            }
-        }
 
-        stage('Setup Permissions') {
-            steps {
-                script {
-                    if (env.RUN_FRONTEND == "true") {
-                        echo "🔧 Setting permissions..."
-                        sh "sudo chmod -R 755 /var/www/html"
-                    } else {
-                        echo "⏭ Skipping Setup Permissions"
+                    if (changes.contains("app/backend/")) {
+                        env.RUN_BACKEND = "true"
+                    }
+
+                    if (changes.contains("simpleweb/")) {
+                        env.RUN_SIMPLEWEB = "true"
                     }
                 }
             }
         }
 
         stage('Deploy Frontend') {
+            when {
+                expression { env.RUN_FRONTEND == "true" }
+            }
             steps {
-                script {
-                    if (env.RUN_FRONTEND == "true") {
-                        echo "📂 Deploying frontend..."
+                sh """
+                echo "🚀 Deploying frontend..."
+                sudo rm -rf /var/www/html/main
+                sudo mkdir -p /var/www/html/main
+                sudo cp -r app_repo/app/frontend/* /var/www/html/main/
+                """
+            }
+        }
 
-                        sh """
-                        sudo rm -rf /var/www/html/*
-                        sudo cp -r app/frontend/* /var/www/html/
-                        """
-                    } else {
-                        echo "⏭ Skipping Deployment"
-                    }
-                }
+        stage('Deploy SimpleWeb') {
+            when {
+                expression { env.RUN_SIMPLEWEB == "true" }
+            }
+            steps {
+                sh """
+                echo "🚀 Deploying simpleweb..."
+                sudo rm -rf /var/www/html/simpleweb
+                sudo mkdir -p /var/www/html/simpleweb
+                sudo cp -r app_repo/simpleweb/* /var/www/html/simpleweb/
+                """
+            }
+        }
+
+        stage('Start Backend') {
+            when {
+                expression { env.RUN_BACKEND == "true" }
+            }
+            steps {
+                sh """
+                echo "🚀 Starting backend..."
+                cd app_repo/app/backend
+                npm install
+                pkill node || true
+                nohup node server.js > backend.log 2>&1 &
+                """
             }
         }
 
         stage('Restart Nginx') {
             steps {
-                script {
-                    if (env.RUN_FRONTEND == "true") {
-                        echo "🔄 Restarting Nginx..."
-                        sh "sudo systemctl restart nginx"
-                    } else {
-                        echo "⏭ Skipping Nginx Restart"
-                    }
-                }
+                sh "sudo systemctl restart nginx"
             }
         }
 
         stage('Health Check') {
             steps {
-                script {
-                    if (env.RUN_FRONTEND == "true") {
-                        echo "🌐 Checking app..."
-                        sh "curl -I http://localhost || exit 1"
-                    } else {
-                        echo "⏭ Skipping Health Check"
-                    }
-                }
+                sh "curl -I http://localhost || exit 1"
             }
         }
     }
 
     post {
-        always {
-            echo "📋 Pipeline finished."
-        }
         success {
-            echo "✅ Deployment completed successfully!"
+            echo "✅ Deployment successful"
         }
         failure {
-            echo "❌ Deployment failed!"
+            echo "❌ Deployment failed"
         }
     }
 }
