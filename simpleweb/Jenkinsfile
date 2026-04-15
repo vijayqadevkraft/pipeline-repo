@@ -23,20 +23,21 @@ pipeline {
             }
         }
 
-        stage('Check simpleweb Changes (Webhook Based)') {
+        // 🔥 WEBHOOK BASED CHECK (FIXED)
+        stage('Check simpleweb Changes') {
             steps {
                 script {
-                    def changes = env.changed_files ?: ""
+                    def changes = env.files ?: "first_run"
 
                     echo "Changed files from webhook: ${changes}"
 
-                    if (!changes.contains("simpleweb/")) {
-                        echo "❌ No changes in simpleweb → Skipping"
+                    if (!changes.contains("simpleweb/") && changes != "first_run") {
+                        echo "⏭ No simpleweb changes → Skipping deployment"
                         currentBuild.result = 'NOT_BUILT'
-                        error("Stopping pipeline")
-                    } else {
-                        echo "✅ simpleweb changed → Continue"
+                        return
                     }
+
+                    echo "✅ simpleweb changed → Continue"
                 }
             }
         }
@@ -55,13 +56,14 @@ pipeline {
             }
         }
 
-        stage('Deploy to Nginx (Safe)') {
+        // 🔥 SAFE DEPLOY (RSYNC)
+        stage('Deploy to Nginx') {
             steps {
                 sh '''
                     echo "🚀 Deploying simpleweb..."
 
                     sudo mkdir -p $NGINX_DIR/simpleweb
-                    sudo cp -r $PROJECT_DIR/simpleweb/* $NGINX_DIR/simpleweb/
+                    sudo rsync -av --delete $PROJECT_DIR/simpleweb/ $NGINX_DIR/simpleweb/
                 '''
             }
         }
@@ -88,6 +90,9 @@ pipeline {
         }
         failure {
             echo "❌ Deployment Failed!"
+        }
+        aborted {
+            echo "⏭ Skipped (No changes detected)"
         }
     }
 }
