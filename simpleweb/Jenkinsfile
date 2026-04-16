@@ -9,10 +9,6 @@ pipeline {
         BASE_DIR     = "/opt/projects"
         PROJECT_DIR  = "${BASE_DIR}/webapplication-repo"
         NGINX_DIR    = "/var/www/html"
-
-        RUN_FRONTEND = "false"
-        RUN_BACKEND  = "false"
-        RUN_SIMPLEWEB = "false"
     }
 
     stages {
@@ -34,54 +30,30 @@ pipeline {
             }
         }
 
-        // 🔥 FIXED CHANGE DETECTION
+        // 🔥 ONLY FOR DEBUG (no flags now)
         stage('Detect Changes') {
             steps {
                 script {
-                    def changes = env.files ?: "first_run"
-
                     echo "📦 Webhook REF: ${env.ref}"
-                    echo "📂 Changed files: ${changes}"
-
-                    def changeStr = changes.toString()
-
-                    // First run → deploy everything
-                    if (changes == "first_run") {
-                        env.RUN_FRONTEND = "true"
-                        env.RUN_BACKEND  = "true"
-                        env.RUN_SIMPLEWEB = "true"
-                    }
-
-                    // Full stack app
-                    if (changeStr.contains("app/")) {
-                        echo "✅ Full stack app changed"
-                        env.RUN_FRONTEND = "true"
-                        env.RUN_BACKEND  = "true"
-                    }
-
-                    // Simpleweb
-                    if (changeStr.contains("simpleweb/")) {
-                        echo "✅ Simpleweb changed"
-                        env.RUN_SIMPLEWEB = "true"
-                    }
+                    echo "📂 Changed files: ${env.files}"
                 }
             }
         }
 
-        // 🔥 FULL STACK DEPLOY
+        // 🔥 FULL STACK DEPLOY (FIXED)
         stage('Deploy Full Stack App') {
             when {
-                expression { env.RUN_FRONTEND == "true" || env.RUN_BACKEND == "true" }
+                expression {
+                    return env.files?.toString()?.contains("app/")
+                }
             }
             steps {
                 sh '''
                 echo "🚀 Deploying Full Stack App..."
 
-                # Frontend
                 sudo mkdir -p /var/www/html/main
-                sudo cp -r $PROJECT_DIR/app/frontend/* /var/www/html/main/
+                sudo rsync -av --delete $PROJECT_DIR/app/frontend/ /var/www/html/main/
 
-                # Backend
                 cd $PROJECT_DIR/app/backend
                 npm install
 
@@ -91,22 +63,24 @@ pipeline {
             }
         }
 
-        // 🔥 FIXED SIMPLEWEB DEPLOY (NOW WILL RUN)
+        // 🔥 SIMPLEWEB DEPLOY (FIXED - MAIN ISSUE)
         stage('Deploy SimpleWeb') {
             when {
-                expression { env.RUN_SIMPLEWEB == "true" }
+                expression {
+                    return env.files?.toString()?.contains("simpleweb/")
+                }
             }
             steps {
                 sh '''
                 echo "🚀 Deploying SimpleWeb..."
 
                 sudo mkdir -p /var/www/html/simpleweb
-                sudo cp -r $PROJECT_DIR/simpleweb/* /var/www/html/simpleweb/
+                sudo rsync -av --delete $PROJECT_DIR/simpleweb/ /var/www/html/simpleweb/
                 '''
             }
         }
 
-        // 🔥 NGINX AUTO CONFIG (FIXED ESCAPING)
+        // 🔥 NGINX CONFIG
         stage('Configure Nginx') {
             steps {
                 sh '''
